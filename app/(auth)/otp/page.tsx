@@ -23,12 +23,21 @@ export default function OTPPage() {
   useEffect(() => {
     const id = sessionStorage.getItem("otp_userId") || "";
     const phone = sessionStorage.getItem("otp_maskedPhone") || "+250 78X XXX XXX";
+    const devOtp = sessionStorage.getItem("otp_dev") || "";
     if (!id) {
       router.replace("/login");
       return;
     }
     setUserId(id);
     setMaskedPhone(phone);
+    if (devOtp) {
+      sessionStorage.removeItem("otp_dev");
+      setDigits(devOtp.split(""));
+      // auto-submit after a short visual delay
+      setTimeout(() => {
+        (document.getElementById("otp-form") as HTMLFormElement)?.requestSubmit();
+      }, 400);
+    }
   }, [router]);
 
   // Countdown timer
@@ -238,7 +247,7 @@ export default function OTPPage() {
             </p>
           </div>
 
-          <form onSubmit={handleVerify} className="space-y-6">
+          <form id="otp-form" onSubmit={handleVerify} className="space-y-6">
             {/* OTP Input Boxes */}
             <div>
               <div className="flex gap-2.5 justify-between" onPaste={handlePaste}>

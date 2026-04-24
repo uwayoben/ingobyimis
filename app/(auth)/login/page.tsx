@@ -40,6 +40,7 @@ export default function LoginPage() {
       }
       sessionStorage.setItem("otp_userId", json.data.userId);
       sessionStorage.setItem("otp_maskedPhone", json.data.maskedPhone || "");
+      if (json.data.devOtp) sessionStorage.setItem("otp_dev", json.data.devOtp);
       router.push("/otp");
     } catch {
       setError("Network error. Please check your connection.");

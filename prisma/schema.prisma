@@ -1,0 +1,244 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  super_admin
+  managing_director
+  loan_officer
+  receptionist
+  shareholder
+}
+
+enum CompanyStatus {
+  active
+  suspended
+  trial
+}
+
+enum LoanStatus {
+  pending
+  approved
+  disbursed
+  active
+  completed
+  rejected
+  overdue
+}
+
+enum InterestType {
+  flat
+  declining
+}
+
+enum PaymentFrequency {
+  daily
+  weekly
+  biweekly
+  monthly
+}
+
+enum FeeType {
+  fixed
+  percentage
+}
+
+enum PaymentMethod {
+  cash
+  bank_transfer
+  mobile_money
+}
+
+enum NotificationType {
+  payment_due
+  overdue
+  approval_needed
+  disbursement
+  system
+}
+
+// ─── Models ───────────────────────────────────────────────────────────────────
+
+model Company {
+  id            String        @id @default(cuid())
+  name          String
+  logo          String?
+  email         String        @unique
+  phone         String
+  address       String
+  status        CompanyStatus @default(active)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  users         User[]
+  customers     Customer[]
+  loans         Loan[]
+  payments      Payment[]
+  notifications Notification[]
+  assets        Asset[]
+  expenses      Expense[]
+}
+
+model User {
+  id          String    @id @default(cuid())
+  name        String
+  email       String    @unique
+  password    String
+  role        UserRole
+  phone       String?
+  otpCode     String?
+  otpExpiry   DateTime?
+  isActive    Boolean   @default(true)
+  companyId   String
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  createdLoans  Loan[]    @relation("CreatedBy")
+  approvedLoans Loan[]    @relation("ApprovedBy")
+  payments      Payment[]
+}
+
+model Customer {
+  id                    String    @id @default(cuid())
+  names                 String
+  nationalId            String    @unique
+  dateOfBirth           DateTime
+  gender                String
+  province              String
+  district              String
+  sector                String
+  cell                  String
+  village               String
+  phone                 String
+  email                 String?
+  maritalStatus         String
+  employerName          String?
+  employmentStatus      String
+  relationshipWithNdfsp String?
+  photo                 String?
+  isActive              Boolean   @default(true)
+  spouseName            String?
+  spousePhone           String?
+  spouseIdNumber        String?
+  maritalPropertyRegime String?
+  companyId             String
+  company               Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  loans                 Loan[]
+  payments              Payment[]
+}
+
+model Loan {
+  id                 String           @id @default(cuid())
+  customerId         String
+  customer           Customer         @relation(fields: [customerId], references: [id])
+  amount             Int
+  interestRate       Decimal          @db.Decimal(5, 2)
+  interestType       InterestType
+  frequency          PaymentFrequency
+  installments       Int
+  disbursedAmount    Int              @default(0)
+  status             LoanStatus       @default(pending)
+  purpose            String
+  companyId          String
+  company            Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdById        String
+  createdBy          User             @relation("CreatedBy", fields: [createdById], references: [id])
+  approvedById       String?
+  approvedBy         User?            @relation("ApprovedBy", fields: [approvedById], references: [id])
+  createdAt          DateTime         @default(now())
+  approvedAt         DateTime?
+  disbursedAt        DateTime?
+  dueDate            DateTime
+  nextPaymentDate    DateTime?
+  nextPaymentAmount  Int              @default(0)
+  totalRepayable     Int              @default(0)
+  totalPaid          Int              @default(0)
+  outstandingBalance Int              @default(0)
+  paidInstallments   Int              @default(0)
+  penaltyAmount      Int              @default(0)
+  updatedAt          DateTime         @updatedAt
+
+  fees               LoanFee[]
+  payments           Payment[]
+}
+
+model LoanFee {
+  id          String   @id @default(cuid())
+  loanId      String
+  loan        Loan     @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  name        String
+  type        FeeType
+  value       Decimal  @db.Decimal(10, 2)
+  isRecurring Boolean  @default(false)
+}
+
+model Payment {
+  id           String        @id @default(cuid())
+  loanId       String
+  loan         Loan          @relation(fields: [loanId], references: [id])
+  customerId   String
+  customer     Customer      @relation(fields: [customerId], references: [id])
+  amount       Int
+  penalty      Int           @default(0)
+  interest     Int
+  principal    Int
+  date         DateTime
+  method       PaymentMethod
+  reference    String        @unique
+  notes        String?       @db.Text
+  recordedById String
+  recordedBy   User          @relation(fields: [recordedById], references: [id])
+  companyId    String
+  company      Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdAt    DateTime      @default(now())
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  type      NotificationType
+  title     String
+  message   String           @db.Text
+  isRead    Boolean          @default(false)
+  link      String?
+  userId    String?
+  companyId String
+  company   Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdAt DateTime         @default(now())
+}
+
+model Asset {
+  id               String   @id @default(cuid())
+  name             String
+  category         String
+  purchaseDate     DateTime
+  purchaseValue    Int
+  currentValue     Int
+  depreciationRate Decimal  @db.Decimal(5, 2)
+  companyId        String
+  company          Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  category    String
+  description String
+  amount      Int
+  date        DateTime
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+}

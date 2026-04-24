@@ -54,10 +54,8 @@ export default function CustomersPage() {
 
   const activeCount = customers.filter((c) => c.activeLoans > 0).length;
   const totalOutstanding = customers.reduce((s, c) => s + c.outstandingBalance, 0);
-  const scoredCustomers = customers.filter((c) => c.creditScore);
-  const avgCreditScore = scoredCustomers.length
-    ? Math.round(scoredCustomers.reduce((s, c) => s + (c.creditScore ?? 0), 0) / scoredCustomers.length)
-    : 0;
+  const employedCount = customers.filter((c) => c.employmentStatus && c.employmentStatus !== "Unemployed").length;
+  const employedPct = customers.length > 0 ? Math.round((employedCount / customers.length) * 100) : 0;
 
   return (
     <div className="space-y-6">
@@ -105,7 +103,7 @@ export default function CustomersPage() {
           { label: "Total Customers", value: customers.length.toString(), icon: <Users className="w-5 h-5" />, color: "bg-green-500/15 text-green-600 dark:text-green-400", border: "border-l-green-500" },
           { label: "Active Borrowers", value: activeCount.toString(), icon: <UserCheck className="w-5 h-5" />, color: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400", border: "border-l-emerald-500" },
           { label: "Outstanding Balance", value: `RWF ${(totalOutstanding / 1_000_000).toFixed(1)}M`, icon: <CreditCard className="w-5 h-5" />, color: "bg-blue-500/15 text-blue-600 dark:text-blue-400", border: "border-l-blue-500" },
-          { label: "Avg. Credit Score", value: avgCreditScore ? avgCreditScore.toString() : "—", icon: <TrendingUp className="w-5 h-5" />, color: "bg-amber-500/15 text-amber-600 dark:text-amber-400", border: "border-l-amber-500" },
+          { label: "Employed", value: customers.length > 0 ? `${employedPct}%` : "—", icon: <TrendingUp className="w-5 h-5" />, color: "bg-amber-500/15 text-amber-600 dark:text-amber-400", border: "border-l-amber-500" },
         ].map((stat, i) => (
           <motion.div
             key={stat.label}
@@ -178,10 +176,10 @@ export default function CustomersPage() {
                 <tr className="border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/30">
                   <th className="text-left text-xs font-semibold text-gray-500 dark:text-gray-400 px-6 py-3 uppercase tracking-wider">Customer</th>
                   <th className="text-left text-xs font-semibold text-gray-500 dark:text-gray-400 px-4 py-3 uppercase tracking-wider hidden md:table-cell">National ID</th>
-                  <th className="text-left text-xs font-semibold text-gray-500 dark:text-gray-400 px-4 py-3 uppercase tracking-wider hidden lg:table-cell">Phone</th>
+                  <th className="text-left text-xs font-semibold text-gray-500 dark:text-gray-400 px-4 py-3 uppercase tracking-wider hidden lg:table-cell">Location</th>
                   <th className="text-left text-xs font-semibold text-gray-500 dark:text-gray-400 px-4 py-3 uppercase tracking-wider hidden sm:table-cell">Loans</th>
                   <th className="text-right text-xs font-semibold text-gray-500 dark:text-gray-400 px-4 py-3 uppercase tracking-wider">Outstanding</th>
-                  <th className="text-left text-xs font-semibold text-gray-500 dark:text-gray-400 px-4 py-3 uppercase tracking-wider hidden lg:table-cell">Credit Score</th>
+                  <th className="text-left text-xs font-semibold text-gray-500 dark:text-gray-400 px-4 py-3 uppercase tracking-wider hidden lg:table-cell">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
@@ -207,14 +205,7 @@ export default function CustomersPage() {
 }
 
 function CustomerRow({ customer, index }: { customer: Customer; index: number }) {
-  const scoreVariant = (score?: number): "success" | "warning" | "danger" | "neutral" => {
-    if (!score) return "neutral";
-    if (score >= 750) return "success";
-    if (score >= 650) return "warning";
-    return "danger";
-  };
-
-  const initials = `${customer.firstName[0]}${customer.lastName[0]}`;
+  const initials = customer.names.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
   const gradients = [
     "from-green-500 to-emerald-600",
     "from-blue-500 to-cyan-600",
@@ -237,8 +228,8 @@ function CustomerRow({ customer, index }: { customer: Customer; index: number })
             {initials}
           </div>
           <div>
-            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 group-hover:text-green-600 dark:group-hover:text-green-400 transition-colors">{customer.firstName} {customer.lastName}</p>
-            <p className="text-xs text-gray-500 dark:text-gray-400">{customer.email}</p>
+            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 group-hover:text-green-600 dark:group-hover:text-green-400 transition-colors">{customer.names}</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">{customer.phone}</p>
           </div>
         </Link>
       </td>
@@ -246,7 +237,8 @@ function CustomerRow({ customer, index }: { customer: Customer; index: number })
         <span className="text-xs font-mono bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 px-2 py-0.5 rounded-md">{customer.nationalId}</span>
       </td>
       <td className="px-4 py-3.5 hidden lg:table-cell">
-        <span className="text-xs text-gray-600 dark:text-gray-400">{customer.phone}</span>
+        <p className="text-xs text-gray-700 dark:text-gray-300">{customer.district}</p>
+        <p className="text-[11px] text-gray-400">{customer.province}</p>
       </td>
       <td className="px-4 py-3.5 hidden sm:table-cell">
         <div className="flex items-center gap-1.5">
@@ -263,11 +255,9 @@ function CustomerRow({ customer, index }: { customer: Customer; index: number })
         </span>
       </td>
       <td className="px-4 py-3.5 hidden lg:table-cell">
-        {customer.creditScore ? (
-          <Badge variant={scoreVariant(customer.creditScore)} className="font-mono">{customer.creditScore}</Badge>
-        ) : (
-          <span className="text-xs text-gray-300 dark:text-gray-600">—</span>
-        )}
+        <Badge variant={customer.isActive ? "success" : "neutral"} className="text-[10px]">
+          {customer.isActive ? "Active" : "Inactive"}
+        </Badge>
       </td>
     </motion.tr>
   );
