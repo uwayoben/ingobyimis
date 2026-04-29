@@ -128,7 +128,7 @@ export default function LoginPage() {
           transition={{ delay: 0.8 }}
           className="relative text-xs text-green-400/40"
         >
-          © 2026 Ingobyi Finance Ltd · Kigali, Rwanda
+          © 2026 CREDLY SOFTWARE SOLUTIONS · Kigali, Rwanda
         </motion.p>
       </div>
 
@@ -166,7 +166,7 @@ export default function LoginPage() {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@ingobyi.rw"
+                  placeholder="you@company.rw"
                   autoComplete="email"
                   className="w-full pl-10 pr-4 py-2.5 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
                 />
@@ -177,7 +177,7 @@ export default function LoginPage() {
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Password</label>
-                <Link href="#" className="text-xs text-green-600 dark:text-green-400 hover:underline font-medium">
+                <Link href="/forgot-password" className="text-xs text-green-600 dark:text-green-400 hover:underline font-medium">
                   Forgot password?
                 </Link>
               </div>
@@ -252,7 +252,7 @@ export default function LoginPage() {
         </motion.div>
 
         <p className="mt-8 text-xs text-gray-400 text-center">
-          Protected by end-to-end encryption · Ingobyi Finance Ltd
+          Protected by end-to-end encryption · CREDLY SOFTWARE SOLUTIONS
         </p>
       </div>
     </div>

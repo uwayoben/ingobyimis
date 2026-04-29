@@ -10,7 +10,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const { id } = await params;
 
     const n = await prisma.notification.findFirst({
-      where: { id, companyId: auth.companyId },
+      where: { id, companyId: auth.companyId! },
     });
     if (!n) return notFound();
 
@@ -33,7 +33,7 @@ export async function POST(request: Request) {
     if (!auth) return unauthorized();
 
     await prisma.notification.updateMany({
-      where: { companyId: auth.companyId, isRead: false },
+      where: { companyId: auth.companyId!, isRead: false },
       data: { isRead: true },
     });
 

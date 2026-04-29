@@ -12,7 +12,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const body = await request.json().catch(() => ({}));
     const action: "approve" | "reject" = body.action ?? "approve";
 
-    const loan = await prisma.loan.findFirst({ where: { id, companyId: auth.companyId } });
+    const loan = await prisma.loan.findFirst({ where: { id, companyId: auth.companyId! } });
     if (!loan) return notFound("Loan not found.");
     if (loan.status !== "pending") return badRequest(`Loan is already ${loan.status}.`);
 
@@ -30,7 +30,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         type: "disbursement",
         title: action === "approve" ? "Loan Approved" : "Loan Rejected",
         message: `Loan ${id.toUpperCase()} has been ${action === "approve" ? "approved" : "rejected"} by ${auth.name}.`,
-        companyId: auth.companyId,
+        companyId: auth.companyId!,
         link: `/loans/${id}`,
       },
     });

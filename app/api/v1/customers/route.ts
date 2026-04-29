@@ -37,7 +37,7 @@ export async function GET(request: Request) {
     const skip = (page - 1) * limit;
 
     const where = {
-      companyId: auth.companyId,
+      companyId: auth.companyId!,
       ...(search && {
         OR: [
           { names: { contains: search } },
@@ -59,7 +59,7 @@ export async function GET(request: Request) {
           _count: { select: { loans: true } },
           loans: {
             where: { status: { in: ["active", "overdue"] } },
-            select: { outstandingBalance: true, status: true },
+            select: { balanceOutstanding: true, status: true },
           },
         },
       }),
@@ -88,7 +88,7 @@ export async function GET(request: Request) {
       createdAt: c.createdAt,
       totalLoans: c._count.loans,
       activeLoans: c.loans.filter((l) => l.status === "active" || l.status === "overdue").length,
-      outstandingBalance: c.loans.reduce((s, l) => s + l.outstandingBalance, 0),
+      outstandingBalance: c.loans.reduce((s, l) => s + l.balanceOutstanding, 0),
     }));
 
     return paginated(data, total, page, limit);
@@ -103,6 +103,7 @@ export async function POST(request: Request) {
     const auth = getAuthUser(request);
     if (!auth) return unauthorized();
     if (!["managing_director", "loan_officer", "receptionist"].includes(auth.role)) return forbidden();
+    if (!auth.companyId) return forbidden("Company context required.");
 
     const body = await request.json();
     // Treat empty email as absent
@@ -116,13 +117,14 @@ export async function POST(request: Request) {
         ...parsed.data,
         email: parsed.data.email || null,
         dateOfBirth: new Date(parsed.data.dateOfBirth),
-        companyId: auth.companyId,
+        companyId: auth.companyId!,
       },
     });
 
     return created(customer);
   } catch (e: any) {
     if (e?.code === "P2002") return badRequest("A customer with this National ID already exists.");
+    if (e?.code === "P2003") return badRequest("Session is invalid. Please log out and log back in.");
     console.error(e);
     return serverError();
   }

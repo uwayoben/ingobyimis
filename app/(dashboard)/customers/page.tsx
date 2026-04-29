@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { CustomerForm } from "@/components/customers/CustomerForm";
 import Link from "next/link";
 import type { Customer } from "@/types";
+import { apiFetch } from "@/lib/api-fetch";
 
 function formatCurrency(n: number) {
   return "RWF " + n.toLocaleString();
@@ -32,7 +33,7 @@ export default function CustomersPage() {
     try {
       const params = new URLSearchParams({ limit: "100" });
       if (search) params.set("search", search);
-      const res = await fetch(`/api/v1/customers?${params}`);
+      const res = await apiFetch(`/api/v1/customers?${params}`);
       if (!res.ok) return;
       const json = await res.json();
       setCustomers(json.data ?? []);
@@ -47,13 +48,13 @@ export default function CustomersPage() {
   }, [fetchCustomers, search]);
 
   const filtered = customers.filter((c) => {
-    if (filter === "active") return c.activeLoans > 0;
-    if (filter === "none") return c.activeLoans === 0;
+    if (filter === "active") return (c.activeLoans ?? 0) > 0;
+    if (filter === "none") return (c.activeLoans ?? 0) === 0;
     return true;
   });
 
-  const activeCount = customers.filter((c) => c.activeLoans > 0).length;
-  const totalOutstanding = customers.reduce((s, c) => s + c.outstandingBalance, 0);
+  const activeCount = customers.filter((c) => (c.activeLoans ?? 0) > 0).length;
+  const totalOutstanding = customers.reduce((s, c) => s + (c.outstandingBalance ?? 0), 0);
   const employedCount = customers.filter((c) => c.employmentStatus && c.employmentStatus !== "Unemployed").length;
   const employedPct = customers.length > 0 ? Math.round((employedCount / customers.length) * 100) : 0;
 
@@ -66,24 +67,24 @@ export default function CustomersPage() {
         className="relative overflow-hidden bg-gradient-to-r from-green-700 via-green-600 to-emerald-600 rounded-2xl p-6 text-white shadow-lg shadow-green-900/20"
       >
         <div className="absolute inset-0 opacity-10" style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E\")" }} />
-        <div className="relative flex items-start justify-between flex-wrap gap-4">
+        <div className="relative flex items-start justify-between flex-wrap gap-3">
           <div>
             <p className="text-green-200 text-sm font-medium mb-1">Customer Management</p>
-            <h2 className="text-2xl font-bold">Customers</h2>
+            <h2 className="text-xl sm:text-2xl font-bold">Customers</h2>
             <p className="text-green-100/80 text-sm mt-1">Manage borrowers and track loan portfolios</p>
           </div>
-          <div className="flex gap-3 flex-wrap">
-            <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-              <p className="text-lg font-bold">{customers.length}</p>
-              <p className="text-xs text-green-100/70">Total Registered</p>
+          <div className="flex gap-2 flex-wrap">
+            <div className="bg-white/15 backdrop-blur-sm rounded-xl px-3 py-2 text-center">
+              <p className="text-base sm:text-lg font-bold">{customers.length}</p>
+              <p className="text-xs text-green-100/70">Registered</p>
             </div>
-            <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-              <p className="text-lg font-bold">{activeCount}</p>
-              <p className="text-xs text-green-100/70">Active Borrowers</p>
+            <div className="bg-white/15 backdrop-blur-sm rounded-xl px-3 py-2 text-center">
+              <p className="text-base sm:text-lg font-bold">{activeCount}</p>
+              <p className="text-xs text-green-100/70">Borrowers</p>
             </div>
-            <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-              <p className="text-lg font-bold">RWF {(totalOutstanding / 1_000_000).toFixed(1)}M</p>
-              <p className="text-xs text-green-100/70">Total Outstanding</p>
+            <div className="bg-white/15 backdrop-blur-sm rounded-xl px-3 py-2 text-center">
+              <p className="text-base sm:text-lg font-bold">RWF {(totalOutstanding / 1_000_000).toFixed(1)}M</p>
+              <p className="text-xs text-green-100/70">Outstanding</p>
             </div>
           </div>
         </div>
@@ -244,14 +245,14 @@ function CustomerRow({ customer, index }: { customer: Customer; index: number })
         <div className="flex items-center gap-1.5">
           <span className="text-xs font-medium text-gray-900 dark:text-gray-100">{customer.totalLoans}</span>
           <span className="text-xs text-gray-400">total</span>
-          {customer.activeLoans > 0 && (
+          {(customer.activeLoans ?? 0) > 0 && (
             <Badge variant="success" className="ml-1 text-[10px]">{customer.activeLoans} active</Badge>
           )}
         </div>
       </td>
       <td className="px-4 py-3.5 text-right">
-        <span className={`text-sm font-semibold ${customer.outstandingBalance > 0 ? "text-gray-900 dark:text-gray-100" : "text-gray-300 dark:text-gray-600"}`}>
-          {customer.outstandingBalance > 0 ? formatCurrency(customer.outstandingBalance) : "—"}
+        <span className={`text-sm font-semibold ${(customer.outstandingBalance ?? 0) > 0 ? "text-gray-900 dark:text-gray-100" : "text-gray-300 dark:text-gray-600"}`}>
+          {(customer.outstandingBalance ?? 0) > 0 ? formatCurrency(customer.outstandingBalance!) : "—"}
         </span>
       </td>
       <td className="px-4 py-3.5 hidden lg:table-cell">

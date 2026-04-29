@@ -11,6 +11,7 @@ const createSchema = z.object({
   address: z.string().min(1),
   adminName: z.string().min(1),
   adminEmail: z.string().email(),
+  adminPhone: z.string().min(1, "Managing director phone number is required"),
   adminPassword: z.string().min(8),
 });
 
@@ -26,7 +27,7 @@ export async function GET(request: Request) {
         _count: { select: { users: true, customers: true, loans: true } },
         loans: {
           where: { status: { in: ["active", "overdue"] } },
-          select: { outstandingBalance: true },
+          select: { balanceOutstanding: true },
         },
       },
     });
@@ -41,7 +42,7 @@ export async function GET(request: Request) {
       createdAt: c.createdAt,
       employeeCount: c._count.users,
       activeLoans: c._count.loans,
-      totalPortfolio: c.loans.reduce((s, l) => s + l.outstandingBalance, 0),
+      totalPortfolio: c.loans.reduce((s, l) => s + l.balanceOutstanding, 0),
     }));
 
     return ok(data);
@@ -73,6 +74,7 @@ export async function POST(request: Request) {
           create: {
             name: parsed.data.adminName,
             email: parsed.data.adminEmail,
+            phone: parsed.data.adminPhone,
             password: hashedPassword,
             role: "managing_director",
           },

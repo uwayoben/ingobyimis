@@ -32,18 +32,27 @@ enum LoanStatus {
   completed
   rejected
   overdue
+  written_off
 }
 
-enum InterestType {
+enum InterestMethod {
   flat
   declining
 }
 
-enum PaymentFrequency {
-  daily
-  weekly
-  biweekly
-  monthly
+enum LoanClass {
+  Normal
+  Watch
+  Substandard
+  Doubtful
+  Loss
+}
+
+enum InstallmentStatus {
+  pending
+  paid
+  partial
+  overdue
 }
 
 enum FeeType {
@@ -65,6 +74,22 @@ enum NotificationType {
   system
 }
 
+enum AuditAction {
+  login_attempt
+  login_success
+  login_failed
+  otp_verified
+  otp_failed
+}
+
+enum LedgerType {
+  deposit
+  withdrawal
+  disbursement
+  repayment
+  expense
+}
+
 // ─── Models ───────────────────────────────────────────────────────────────────
 
 model Company {
@@ -74,17 +99,19 @@ model Company {
   email         String        @unique
   phone         String
   address       String
-  status        CompanyStatus @default(active)
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  status         CompanyStatus @default(active)
+  accountBalance Int           @default(0)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
-  users         User[]
-  customers     Customer[]
-  loans         Loan[]
-  payments      Payment[]
-  notifications Notification[]
-  assets        Asset[]
-  expenses      Expense[]
+  users          User[]
+  customers      Customer[]
+  loans          Loan[]
+  payments       Payment[]
+  notifications  Notification[]
+  assets         Asset[]
+  expenses       Expense[]
+  ledgerEntries  LedgerEntry[]
 }
 
 model User {
@@ -97,12 +124,12 @@ model User {
   otpCode     String?
   otpExpiry   DateTime?
   isActive    Boolean   @default(true)
-  companyId   String
-  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId   String?
+  company     Company?  @relation(fields: [companyId], references: [id], onDelete: Cascade)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  createdLoans  Loan[]    @relation("CreatedBy")
+  officerLoans  Loan[]    @relation("LoanOfficer")
   approvedLoans Loan[]    @relation("ApprovedBy")
   payments      Payment[]
 }
@@ -140,38 +167,95 @@ model Customer {
 }
 
 model Loan {
-  id                 String           @id @default(cuid())
-  customerId         String
-  customer           Customer         @relation(fields: [customerId], references: [id])
-  amount             Int
-  interestRate       Decimal          @db.Decimal(5, 2)
-  interestType       InterestType
-  frequency          PaymentFrequency
-  installments       Int
-  disbursedAmount    Int              @default(0)
-  status             LoanStatus       @default(pending)
-  purpose            String
-  companyId          String
-  company            Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  createdById        String
-  createdBy          User             @relation("CreatedBy", fields: [createdById], references: [id])
-  approvedById       String?
-  approvedBy         User?            @relation("ApprovedBy", fields: [approvedById], references: [id])
-  createdAt          DateTime         @default(now())
-  approvedAt         DateTime?
-  disbursedAt        DateTime?
-  dueDate            DateTime
-  nextPaymentDate    DateTime?
-  nextPaymentAmount  Int              @default(0)
-  totalRepayable     Int              @default(0)
-  totalPaid          Int              @default(0)
-  outstandingBalance Int              @default(0)
-  paidInstallments   Int              @default(0)
-  penaltyAmount      Int              @default(0)
-  updatedAt          DateTime         @updatedAt
+  id            String     @id @default(cuid())
+  companyId     String
+  company       Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
-  fees               LoanFee[]
-  payments           Payment[]
+  // Parties
+  customerId    String
+  customer      Customer   @relation(fields: [customerId], references: [id])
+  loanOfficerId String
+  loanOfficer   User       @relation("LoanOfficer", fields: [loanOfficerId], references: [id])
+  approvedById  String?
+  approvedBy    User?      @relation("ApprovedBy", fields: [approvedById], references: [id])
+
+  // Basic loan info
+  branchName              String?
+  purpose                 String
+  amount                  Int                     // principal applied for
+
+  // Disbursement
+  disbursedAmount         Int              @default(0)
+  disbursementDate        DateTime?
+
+  // Interest & repayment terms
+  annualInterestRate      Decimal          @db.Decimal(6, 3)  // % per year, e.g. 24.000
+  interestMethod          InterestMethod
+  repaymentFrequencyDays  Int              // 1=daily 7=weekly 14=biweekly 30=monthly
+  gracePeriodDays         Int              @default(0)
+  firstPaymentDate        DateTime?
+  agreedMaturityDate      DateTime
+
+  // Installment tracking
+  totalInstallments       Int
+  installmentsPaid        Int              @default(0)
+
+  // Balance tracking
+  totalRepayable          Int              @default(0)
+  amountRepaidPrincipal   Int              @default(0)
+  amountRepaidInterest    Int              @default(0)
+  balanceOutstanding      Int              @default(0)
+
+  // Arrears
+  arrearsStartDate        DateTime?
+  daysOverdue             Int              @default(0)
+  lastPaymentDate         DateTime?
+  nextPaymentDate         DateTime?
+  nextPaymentAmount       Int              @default(0)
+  penaltyAmount           Int              @default(0)
+
+  // Collateral
+  collateralType          String?
+  collateralAmount        Int?
+  eligibleCollateral      Int?
+
+  // BNR classification & provisioning
+  loanClass               LoanClass        @default(Normal)
+  provisioningRate        Decimal          @db.Decimal(5, 2) @default(0)
+  provisionRequired       Int              @default(0)
+  previousProvision       Int              @default(0)
+  additionalProvision     Int              @default(0)
+
+  // Status flags
+  status                  LoanStatus       @default(pending)
+  isRestructured          Boolean          @default(false)
+  cutoffDate              DateTime?
+  writtenOffDate          DateTime?
+
+  // Timestamps
+  createdAt               DateTime         @default(now())
+  approvedAt              DateTime?
+  updatedAt               DateTime         @updatedAt
+
+  fees                    LoanFee[]
+  payments                Payment[]
+  installments            Installment[]
+}
+
+model Installment {
+  id             String            @id @default(cuid())
+  loanId         String
+  loan           Loan              @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  installmentNo  Int
+  dueDate        DateTime
+  principalDue   Int
+  interestDue    Int
+  totalDue       Int
+  amountPaid     Int               @default(0)
+  paidDate       DateTime?
+  status         InstallmentStatus @default(pending)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
 }
 
 model LoanFee {
@@ -238,7 +322,44 @@ model Expense {
   description String
   amount      Int
   date        DateTime
+  isPaid      Boolean  @default(false)
+  proofUrl    String?  @db.Text
   companyId   String
   company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
   createdAt   DateTime @default(now())
+}
+
+model LedgerEntry {
+  id            String     @id @default(cuid())
+  companyId     String
+  company       Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  type          LedgerType
+  amount        Int
+  balanceBefore Int
+  balanceAfter  Int
+  description   String
+  referenceId   String?
+  createdById   String?
+  createdAt     DateTime   @default(now())
+
+  @@index([companyId])
+  @@index([createdAt])
+}
+
+model AuditLog {
+  id          String      @id @default(cuid())
+  action      AuditAction
+  userEmail   String
+  userName    String?
+  companyName String?
+  ipAddress   String?
+  userAgent   String?
+  details     String?     @db.Text
+  userId      String?
+  companyId   String?
+  createdAt   DateTime    @default(now())
+
+  @@index([createdAt])
+  @@index([userEmail])
+  @@index([companyId])
 }

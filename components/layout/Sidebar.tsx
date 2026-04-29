@@ -1,12 +1,12 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   LayoutDashboard, Users, FileText, CreditCard, BarChart3, Settings,
-  Building2, ChevronDown, LogOut, Shield, ChevronLeft, ChevronRight,
-  Bell, BookOpen, Package, UserCog, TrendingUp,
+  Building2, LogOut, Shield, ChevronLeft, ChevronRight,
+  Bell, BookOpen, Package, TrendingUp, AlertTriangle, X, Receipt,
 } from "lucide-react";
 import { cn, ROLE_LABELS } from "@/lib/utils";
 import type { UserRole } from "@/types";
@@ -21,31 +21,33 @@ const ALL_NAV_ITEMS = [
   {
     group: "Overview",
     items: [
-      { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["super_admin", "managing_director", "loan_officer", "receptionist", "shareholder"] },
+      { href: "/admin",     label: "Admin Panel", icon: Shield,          roles: ["super_admin"] },
+      { href: "/dashboard", label: "Dashboard",   icon: LayoutDashboard, roles: ["managing_director", "loan_officer", "receptionist", "shareholder"] },
     ],
   },
   {
     group: "Operations",
     items: [
-      { href: "/customers", label: "Customers", icon: Users, roles: ["managing_director", "loan_officer", "receptionist"] },
-      { href: "/loans", label: "Loans", icon: FileText, roles: ["managing_director", "loan_officer"] },
-      { href: "/payments", label: "Payments", icon: CreditCard, roles: ["managing_director", "loan_officer", "receptionist"] },
+      { href: "/customers", label: "Customers", icon: Users,          roles: ["managing_director", "loan_officer", "receptionist"] },
+      { href: "/loans",     label: "Loans",     icon: FileText,       roles: ["managing_director", "loan_officer", "receptionist"] },
+      { href: "/payments",  label: "Payments",  icon: CreditCard,     roles: ["managing_director", "loan_officer"] },
+      { href: "/penalties", label: "Penalties", icon: AlertTriangle,  roles: ["managing_director", "loan_officer"] },
     ],
   },
   {
     group: "Finance",
     items: [
-      { href: "/reports", label: "Reports", icon: BarChart3, roles: ["managing_director", "shareholder"] },
-      { href: "/accounting", label: "Accounting", icon: BookOpen, roles: ["managing_director"] },
-      { href: "/assets", label: "Assets", icon: Package, roles: ["managing_director"] },
+      { href: "/reports",    label: "Reports",    icon: BarChart3, roles: ["managing_director", "loan_officer", "shareholder"] },
+      { href: "/accounting", label: "Accounting", icon: BookOpen,  roles: ["managing_director", "loan_officer"] },
+      { href: "/accounting", label: "Expenses",   icon: Receipt,   roles: ["receptionist"] },
+      { href: "/assets",     label: "Assets",     icon: Package,   roles: ["managing_director"] },
     ],
   },
   {
     group: "Management",
     items: [
-      { href: "/company", label: "Company", icon: Building2, roles: ["managing_director"] },
-      { href: "/notifications", label: "Notifications", icon: Bell, roles: ["managing_director", "loan_officer", "receptionist"] },
-      { href: "/admin", label: "Admin Panel", icon: Shield, roles: ["super_admin"] },
+      { href: "/company",       label: "Manage Users",  icon: Building2, roles: ["managing_director"] },
+      { href: "/notifications", label: "Notifications", icon: Bell,      roles: ["managing_director", "loan_officer", "receptionist"] },
     ],
   },
   {
@@ -56,8 +58,6 @@ const ALL_NAV_ITEMS = [
   },
 ];
 
-const ROLES: UserRole[] = ["managing_director", "loan_officer", "receptionist", "shareholder", "super_admin"];
-
 const ROLE_ICONS: Record<UserRole, React.FC<{ className?: string }>> = {
   super_admin: Shield,
   managing_director: TrendingUp,
@@ -66,14 +66,30 @@ const ROLE_ICONS: Record<UserRole, React.FC<{ className?: string }>> = {
   shareholder: BarChart3,
 };
 
-export function Sidebar() {
+export function Sidebar({ onMobileClose }: { onMobileClose?: () => void }) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
-  const [roleMenuOpen, setRoleMenuOpen] = useState(false);
-  const { role, setRole } = useRole();
+  const { role } = useRole();
+  const [storedUser, setStoredUser] = useState<ReturnType<typeof getStoredUser>>(null);
+
+  useEffect(() => { setStoredUser(getStoredUser()); }, []);
 
   const RoleIcon = ROLE_ICONS[role] ?? Shield;
-  const storedUser = getStoredUser();
+
+  const companyName = storedUser?.role === "super_admin"
+    ? "MFI Platform"
+    : (storedUser?.companyName ?? "");
+
+  const companySubtitle = storedUser?.role === "super_admin"
+    ? "System Administration"
+    : "MFI Platform";
+
+  const handleLogout = async () => {
+    await fetch("/api/v1/auth/logout", { method: "POST" });
+    localStorage.removeItem("user");
+    // Hard navigation clears all React state (RoleContext, cached user data, etc.)
+    window.location.href = "/login";
+  };
 
   return (
     <motion.aside
@@ -82,6 +98,16 @@ export function Sidebar() {
       className="relative flex flex-col h-full overflow-hidden bg-[#052e16] text-white"
       style={{ boxShadow: "4px 0 24px rgba(0,0,0,0.25)" }}
     >
+      {/* Mobile close button */}
+      {onMobileClose && (
+        <button
+          onClick={onMobileClose}
+          className="absolute top-4 right-4 z-10 lg:hidden p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white/70 hover:text-white transition-colors"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      )}
+
       {/* Logo Header */}
       <div className="flex items-center gap-3 px-4 h-16 shrink-0 border-b border-white/10">
         <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-green-400 to-green-600 flex items-center justify-center shrink-0 shadow-lg">
@@ -95,60 +121,25 @@ export function Sidebar() {
               exit={{ opacity: 0, x: -10 }}
               transition={{ duration: 0.2 }}
             >
-              <p className="font-bold text-sm text-white leading-none">Ingobyi Finance</p>
-              <p className="text-[10px] text-green-300/70 mt-0.5">MFI Platform</p>
+              <p className="font-bold text-sm text-white leading-none">{companyName}</p>
+              <p className="text-[10px] text-green-300/70 mt-0.5">{companySubtitle}</p>
             </motion.div>
           )}
         </AnimatePresence>
       </div>
 
-      {/* Role Switcher */}
+      {/* Role Badge */}
       {!collapsed && (
         <div className="px-3 pt-3 pb-2">
-          <button
-            onClick={() => setRoleMenuOpen((v) => !v)}
-            className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 transition-colors"
-          >
+          <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-white/10">
             <div className="w-7 h-7 rounded-lg bg-green-600 flex items-center justify-center shrink-0">
               <RoleIcon className="w-3.5 h-3.5 text-white" />
             </div>
             <div className="flex-1 text-left min-w-0">
               <p className="text-xs font-semibold text-white truncate">{ROLE_LABELS[role]}</p>
-              <p className="text-[10px] text-green-300/60">Active role</p>
+              <p className="text-[10px] text-green-300/60">Your role</p>
             </div>
-            <ChevronDown className={cn("w-3.5 h-3.5 text-green-300/60 transition-transform shrink-0", roleMenuOpen && "rotate-180")} />
-          </button>
-
-          <AnimatePresence>
-            {roleMenuOpen && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                className="mt-1.5 overflow-hidden rounded-xl bg-white/5 border border-white/10"
-              >
-                {ROLES.map((r) => {
-                  const Icon = ROLE_ICONS[r];
-                  return (
-                    <button
-                      key={r}
-                      onClick={() => { setRole(r); setRoleMenuOpen(false); }}
-                      className={cn(
-                        "w-full flex items-center gap-2.5 px-3 py-2 text-xs transition-colors",
-                        r === role
-                          ? "text-green-300 bg-green-600/20"
-                          : "text-white/60 hover:text-white hover:bg-white/5"
-                      )}
-                    >
-                      <Icon className="w-3.5 h-3.5 shrink-0" />
-                      {ROLE_LABELS[r]}
-                      {r === role && <span className="ml-auto text-green-400">✓</span>}
-                    </button>
-                  );
-                })}
-              </motion.div>
-            )}
-          </AnimatePresence>
+          </div>
         </div>
       )}
 
@@ -166,7 +157,7 @@ export function Sidebar() {
               )}
               {collapsed && <div className="py-1" />}
               {visibleItems.map((item) => {
-                const isActive = pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href));
+                const isActive = pathname === item.href || (item.href !== "/dashboard" && item.href !== "/admin" && pathname.startsWith(item.href));
                 return (
                   <Link
                     key={item.href}
@@ -208,7 +199,10 @@ export function Sidebar() {
 
       {/* User Profile */}
       <div className="border-t border-white/10 p-3">
-        <div className={cn("flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-white/10 cursor-pointer transition-colors", collapsed && "justify-center")}>
+        <button
+          onClick={handleLogout}
+          className={cn("w-full flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-white/10 cursor-pointer transition-colors", collapsed && "justify-center")}
+        >
           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-green-400 to-green-600 flex items-center justify-center text-xs font-bold shrink-0 shadow">
             {(storedUser?.name ?? "U")[0]}
           </div>
@@ -218,15 +212,15 @@ export function Sidebar() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="flex-1 min-w-0"
+                className="flex-1 min-w-0 text-left"
               >
                 <p className="text-xs font-semibold text-white truncate">{storedUser?.name ?? "User"}</p>
                 <p className="text-[10px] text-white/40 truncate">{storedUser?.email ?? ""}</p>
               </motion.div>
             )}
           </AnimatePresence>
-          {!collapsed && <LogOut className="w-3.5 h-3.5 text-white/30 hover:text-white shrink-0" />}
-        </div>
+          {!collapsed && <LogOut className="w-3.5 h-3.5 text-white/50 hover:text-white shrink-0" />}
+        </button>
       </div>
 
       {/* Collapse Button */}

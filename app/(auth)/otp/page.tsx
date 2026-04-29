@@ -23,21 +23,14 @@ export default function OTPPage() {
   useEffect(() => {
     const id = sessionStorage.getItem("otp_userId") || "";
     const phone = sessionStorage.getItem("otp_maskedPhone") || "+250 78X XXX XXX";
-    const devOtp = sessionStorage.getItem("otp_dev") || "";
     if (!id) {
       router.replace("/login");
       return;
     }
     setUserId(id);
     setMaskedPhone(phone);
-    if (devOtp) {
-      sessionStorage.removeItem("otp_dev");
-      setDigits(devOtp.split(""));
-      // auto-submit after a short visual delay
-      setTimeout(() => {
-        (document.getElementById("otp-form") as HTMLFormElement)?.requestSubmit();
-      }, 400);
-    }
+
+    sessionStorage.removeItem("otp_dev");
   }, [router]);
 
   // Countdown timer
@@ -125,7 +118,8 @@ export default function OTPPage() {
       sessionStorage.removeItem("otp_maskedPhone");
       setVerified(true);
       await new Promise((r) => setTimeout(r, 900));
-      router.push("/dashboard");
+      // Hard navigation so RoleProvider re-mounts fresh with the new user's role
+      window.location.href = json.data.user?.role === "super_admin" ? "/admin" : "/dashboard";
     } catch {
       setError("Network error. Please try again.");
     } finally {
@@ -206,7 +200,7 @@ export default function OTPPage() {
         </motion.div>
 
         <p className="absolute bottom-12 text-xs text-green-400/40">
-          © 2026 Ingobyi Finance Ltd · Kigali, Rwanda
+          © 2026 CREDLY SOFTWARE SOLUTIONS · Kigali, Rwanda
         </p>
       </div>
 
@@ -348,13 +342,13 @@ export default function OTPPage() {
           <div className="mt-6 flex items-start gap-3 bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-800/50 rounded-xl p-3.5">
             <ShieldCheck className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
             <p className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
-              Never share your OTP with anyone. Ingobyi staff will never ask for your code.
+              Never share your OTP with anyone. INGOBYI MIS staff will never ask for your code.
             </p>
           </div>
         </motion.div>
 
         <p className="mt-8 text-xs text-gray-400 text-center">
-          Protected by end-to-end encryption · Ingobyi Finance Ltd
+          Protected by end-to-end encryption · CREDLY SOFTWARE SOLUTIONS
         </p>
       </div>
     </div>

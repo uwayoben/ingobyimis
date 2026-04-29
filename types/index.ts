@@ -1,19 +1,23 @@
 export type UserRole = "super_admin" | "managing_director" | "loan_officer" | "receptionist" | "shareholder";
 
-export type LoanStatus = "pending" | "approved" | "disbursed" | "active" | "completed" | "rejected" | "overdue";
+export type LoanStatus = "pending" | "approved" | "disbursed" | "active" | "completed" | "rejected" | "overdue" | "written_off";
 
-export type PaymentFrequency = "daily" | "weekly" | "biweekly" | "monthly";
+export type InterestMethod = "flat" | "declining";
 
-export type InterestType = "flat" | "declining";
+export type LoanClass = "Normal" | "Watch" | "Substandard" | "Doubtful" | "Loss";
+
+export type InstallmentStatus = "pending" | "paid" | "partial" | "overdue";
 
 export interface User {
   id: string;
   name: string;
   email: string;
   role: UserRole;
-  companyId: string;
+  companyId: string | null;
+  companyName?: string | null;
   avatar?: string;
   phone?: string;
+  isActive?: boolean;
   createdAt: string;
 }
 
@@ -24,11 +28,12 @@ export interface Company {
   email: string;
   phone: string;
   address: string;
-  employeeCount: number;
-  activeLoans: number;
-  totalPortfolio: number;
   status: "active" | "suspended" | "trial";
   createdAt: string;
+  // computed by API
+  employeeCount?: number;
+  activeLoans?: number;
+  totalPortfolio?: number;
 }
 
 export interface Customer {
@@ -56,9 +61,10 @@ export interface Customer {
   maritalPropertyRegime?: string;
   companyId: string;
   createdAt: string;
-  totalLoans: number;
-  activeLoans: number;
-  outstandingBalance: number;
+  // computed by API
+  totalLoans?: number;
+  activeLoans?: number;
+  outstandingBalance?: number;
 }
 
 export interface LoanFee {
@@ -69,45 +75,78 @@ export interface LoanFee {
   isRecurring: boolean;
 }
 
-export interface Loan {
-  id: string;
-  customerId: string;
-  customerName: string;
-  amount: number;
-  interestRate: number;
-  interestType: InterestType;
-  frequency: PaymentFrequency;
-  installments: number;
-  disbursedAmount: number;
-  status: LoanStatus;
-  purpose: string;
-  fees: LoanFee[];
-  createdById: string;
-  approvedById?: string;
-  createdAt: string;
-  approvedAt?: string;
-  disbursedAt?: string;
-  dueDate: string;
-  nextPaymentDate: string;
-  nextPaymentAmount: number;
-  totalRepayable: number;
-  totalPaid: number;
-  outstandingBalance: number;
-  paidInstallments: number;
-  penaltyAmount: number;
-  companyId: string;
-}
-
 export interface AmortizationRow {
   installmentNo: number;
   date: string;
   openingBalance: number;
   principal: number;
   interest: number;
-  fees: number;
   totalPayment: number;
   closingBalance: number;
   status: "paid" | "pending" | "overdue";
+}
+
+export interface Installment {
+  id: string;
+  loanId: string;
+  installmentNo: number;
+  dueDate: string;
+  principalDue: number;
+  interestDue: number;
+  totalDue: number;
+  amountPaid: number;
+  paidDate: string | null;
+  status: InstallmentStatus;
+  createdAt: string;
+}
+
+export interface Loan {
+  id: string;
+  companyId: string;
+  customerId: string;
+  customerName: string;
+  loanOfficerId: string;
+  approvedById?: string;
+  branchName?: string;
+  purpose: string;
+  amount: number;
+  disbursedAmount: number;
+  disbursementDate?: string;
+  annualInterestRate: number;
+  interestMethod: InterestMethod;
+  repaymentFrequencyDays: number;
+  gracePeriodDays: number;
+  firstPaymentDate?: string;
+  agreedMaturityDate: string;
+  totalInstallments: number;
+  installmentsPaid: number;
+  installmentsOutstanding: number;
+  totalRepayable: number;
+  amountRepaidPrincipal: number;
+  amountRepaidInterest: number;
+  balanceOutstanding: number;
+  arrearsStartDate?: string;
+  daysOverdue: number;
+  lastPaymentDate?: string;
+  nextPaymentDate?: string;
+  nextPaymentAmount: number;
+  penaltyAmount: number;
+  collateralType?: string;
+  collateralAmount?: number;
+  eligibleCollateral?: number;
+  loanClass: LoanClass;
+  provisioningRate: number;
+  provisionRequired: number;
+  previousProvision: number;
+  additionalProvision: number;
+  status: LoanStatus;
+  isRestructured: boolean;
+  cutoffDate?: string;
+  writtenOffDate?: string;
+  createdAt: string;
+  approvedAt?: string;
+  updatedAt: string;
+  fees: LoanFee[];
 }
 
 export interface Payment {
@@ -115,6 +154,7 @@ export interface Payment {
   loanId: string;
   customerId: string;
   customerName: string;
+  recordedByName?: string;
   amount: number;
   penalty: number;
   interest: number;

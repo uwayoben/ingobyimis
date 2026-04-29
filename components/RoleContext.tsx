@@ -14,17 +14,13 @@ function getInitialRole(): UserRole {
 
 interface RoleContextValue {
   role: UserRole;
-  setRole: (r: UserRole) => void;
 }
 
-const RoleContext = createContext<RoleContextValue>({
-  role: "loan_officer",
-  setRole: () => {},
-});
+const RoleContext = createContext<RoleContextValue>({ role: "loan_officer" });
 
 export function RoleProvider({ children }: { children: ReactNode }) {
-  const [role, setRole] = useState<UserRole>(getInitialRole);
-  return <RoleContext.Provider value={{ role, setRole }}>{children}</RoleContext.Provider>;
+  const [role] = useState<UserRole>(getInitialRole);
+  return <RoleContext.Provider value={{ role }}>{children}</RoleContext.Provider>;
 }
 
 export function useRole() {

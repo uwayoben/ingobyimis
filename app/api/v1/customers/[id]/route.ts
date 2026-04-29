@@ -10,7 +10,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const { id } = await params;
 
     const customer = await prisma.customer.findFirst({
-      where: { id, companyId: auth.companyId },
+      where: { id, companyId: auth.companyId! },
       include: {
         loans: {
           orderBy: { createdAt: "desc" },
@@ -40,7 +40,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const body = await request.json();
 
     const customer = await prisma.customer.findFirst({
-      where: { id, companyId: auth.companyId },
+      where: { id, companyId: auth.companyId! },
     });
     if (!customer) return notFound("Customer not found.");
 

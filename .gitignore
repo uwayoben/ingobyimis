@@ -41,3 +41,14 @@ yarn-error.log*
 next-env.d.ts
 
 /lib/generated/prisma
+
+# uploaded files
+/public/uploads/
+
+# local editor/tool files
+/.claude/
+
+# excel/data files
+*.xlsx
+*.xls
+*.csv

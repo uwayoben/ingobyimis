@@ -37,6 +37,7 @@ export const STATUS_LABELS: Record<LoanStatus, string> = {
   completed: "Completed",
   rejected: "Rejected",
   overdue: "Overdue",
+  written_off: "Written Off",
 };
 
 export const STATUS_COLORS: Record<LoanStatus, string> = {
@@ -47,4 +48,5 @@ export const STATUS_COLORS: Record<LoanStatus, string> = {
   completed: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400",
   rejected: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
   overdue: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
+  written_off: "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-500",
 };

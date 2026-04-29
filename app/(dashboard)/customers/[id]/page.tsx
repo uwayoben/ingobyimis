@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, Phone, Mail, MapPin, Briefcase, CreditCard, TrendingUp, User, Heart, Building2, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { formatDate, STATUS_COLORS, STATUS_LABELS } from "@/lib/utils";
+import { apiFetch } from "@/lib/api-fetch";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -19,7 +20,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`/api/v1/customers/${id}`)
+    apiFetch(`/api/v1/customers/${id}`)
       .then((r) => r.json())
       .then((json) => setCustomer(json.data))
       .catch(() => {})
