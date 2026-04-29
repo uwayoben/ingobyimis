@@ -249,6 +249,7 @@ export default function LoginPage() {
               An OTP will be sent to your registered phone number for two-factor verification.
             </p>
           </div>
+
         </motion.div>
 
         <p className="mt-8 text-xs text-gray-400 text-center">
