@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { PrismaClient } from "../lib/generated/prisma/client";
+import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { generateSchedule, classifyLoan } from "../lib/loan-schedule";
 
