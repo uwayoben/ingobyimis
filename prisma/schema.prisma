@@ -1,0 +1,365 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  super_admin
+  managing_director
+  loan_officer
+  receptionist
+  shareholder
+}
+
+enum CompanyStatus {
+  active
+  suspended
+  trial
+}
+
+enum LoanStatus {
+  pending
+  approved
+  disbursed
+  active
+  completed
+  rejected
+  overdue
+  written_off
+}
+
+enum InterestMethod {
+  flat
+  declining
+}
+
+enum LoanClass {
+  Normal
+  Watch
+  Substandard
+  Doubtful
+  Loss
+}
+
+enum InstallmentStatus {
+  pending
+  paid
+  partial
+  overdue
+}
+
+enum FeeType {
+  fixed
+  percentage
+}
+
+enum PaymentMethod {
+  cash
+  bank_transfer
+  mobile_money
+}
+
+enum NotificationType {
+  payment_due
+  overdue
+  approval_needed
+  disbursement
+  system
+}
+
+enum AuditAction {
+  login_attempt
+  login_success
+  login_failed
+  otp_verified
+  otp_failed
+}
+
+enum LedgerType {
+  deposit
+  withdrawal
+  disbursement
+  repayment
+  expense
+}
+
+// ─── Models ───────────────────────────────────────────────────────────────────
+
+model Company {
+  id            String        @id @default(cuid())
+  name          String
+  logo          String?
+  email         String        @unique
+  phone         String
+  address       String
+  status         CompanyStatus @default(active)
+  accountBalance Int           @default(0)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  users          User[]
+  customers      Customer[]
+  loans          Loan[]
+  payments       Payment[]
+  notifications  Notification[]
+  assets         Asset[]
+  expenses       Expense[]
+  ledgerEntries  LedgerEntry[]
+}
+
+model User {
+  id          String    @id @default(cuid())
+  name        String
+  email       String    @unique
+  password    String
+  role        UserRole
+  phone       String?
+  otpCode     String?
+  otpExpiry   DateTime?
+  isActive    Boolean   @default(true)
+  companyId   String?
+  company     Company?  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  officerLoans  Loan[]    @relation("LoanOfficer")
+  approvedLoans Loan[]    @relation("ApprovedBy")
+  payments      Payment[]
+}
+
+model Customer {
+  id                    String    @id @default(cuid())
+  names                 String
+  nationalId            String    @unique
+  dateOfBirth           DateTime
+  gender                String
+  province              String
+  district              String
+  sector                String
+  cell                  String
+  village               String
+  phone                 String
+  email                 String?
+  maritalStatus         String
+  employerName          String?
+  employmentStatus      String
+  relationshipWithNdfsp String?
+  photo                 String?
+  isActive              Boolean   @default(true)
+  spouseName            String?
+  spousePhone           String?
+  spouseIdNumber        String?
+  maritalPropertyRegime String?
+  companyId             String
+  company               Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  loans                 Loan[]
+  payments              Payment[]
+}
+
+model Loan {
+  id            String     @id @default(cuid())
+  companyId     String
+  company       Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  // Parties
+  customerId    String
+  customer      Customer   @relation(fields: [customerId], references: [id])
+  loanOfficerId String
+  loanOfficer   User       @relation("LoanOfficer", fields: [loanOfficerId], references: [id])
+  approvedById  String?
+  approvedBy    User?      @relation("ApprovedBy", fields: [approvedById], references: [id])
+
+  // Basic loan info
+  branchName              String?
+  purpose                 String
+  amount                  Int                     // principal applied for
+
+  // Disbursement
+  disbursedAmount         Int              @default(0)
+  disbursementDate        DateTime?
+
+  // Interest & repayment terms
+  annualInterestRate      Decimal          @db.Decimal(6, 3)  // % per year, e.g. 24.000
+  interestMethod          InterestMethod
+  repaymentFrequencyDays  Int              // 1=daily 7=weekly 14=biweekly 30=monthly
+  gracePeriodDays         Int              @default(0)
+  firstPaymentDate        DateTime?
+  agreedMaturityDate      DateTime
+
+  // Installment tracking
+  totalInstallments       Int
+  installmentsPaid        Int              @default(0)
+
+  // Balance tracking
+  totalRepayable          Int              @default(0)
+  amountRepaidPrincipal   Int              @default(0)
+  amountRepaidInterest    Int              @default(0)
+  balanceOutstanding      Int              @default(0)
+
+  // Arrears
+  arrearsStartDate        DateTime?
+  daysOverdue             Int              @default(0)
+  lastPaymentDate         DateTime?
+  nextPaymentDate         DateTime?
+  nextPaymentAmount       Int              @default(0)
+  penaltyAmount           Int              @default(0)
+
+  // Collateral
+  collateralType          String?
+  collateralAmount        Int?
+  eligibleCollateral      Int?
+
+  // BNR classification & provisioning
+  loanClass               LoanClass        @default(Normal)
+  provisioningRate        Decimal          @db.Decimal(5, 2) @default(0)
+  provisionRequired       Int              @default(0)
+  previousProvision       Int              @default(0)
+  additionalProvision     Int              @default(0)
+
+  // Status flags
+  status                  LoanStatus       @default(pending)
+  isRestructured          Boolean          @default(false)
+  cutoffDate              DateTime?
+  writtenOffDate          DateTime?
+
+  // Timestamps
+  createdAt               DateTime         @default(now())
+  approvedAt              DateTime?
+  updatedAt               DateTime         @updatedAt
+
+  fees                    LoanFee[]
+  payments                Payment[]
+  installments            Installment[]
+}
+
+model Installment {
+  id             String            @id @default(cuid())
+  loanId         String
+  loan           Loan              @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  installmentNo  Int
+  dueDate        DateTime
+  principalDue   Int
+  interestDue    Int
+  totalDue       Int
+  amountPaid     Int               @default(0)
+  paidDate       DateTime?
+  status         InstallmentStatus @default(pending)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+}
+
+model LoanFee {
+  id          String   @id @default(cuid())
+  loanId      String
+  loan        Loan     @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  name        String
+  type        FeeType
+  value       Decimal  @db.Decimal(10, 2)
+  isRecurring Boolean  @default(false)
+}
+
+model Payment {
+  id           String        @id @default(cuid())
+  loanId       String
+  loan         Loan          @relation(fields: [loanId], references: [id])
+  customerId   String
+  customer     Customer      @relation(fields: [customerId], references: [id])
+  amount       Int
+  penalty      Int           @default(0)
+  interest     Int
+  principal    Int
+  date         DateTime
+  method       PaymentMethod
+  reference    String        @unique
+  notes        String?       @db.Text
+  recordedById String
+  recordedBy   User          @relation(fields: [recordedById], references: [id])
+  companyId    String
+  company      Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdAt    DateTime      @default(now())
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  type      NotificationType
+  title     String
+  message   String           @db.Text
+  isRead    Boolean          @default(false)
+  link      String?
+  userId    String?
+  companyId String
+  company   Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdAt DateTime         @default(now())
+}
+
+model Asset {
+  id               String   @id @default(cuid())
+  name             String
+  category         String
+  purchaseDate     DateTime
+  purchaseValue    Int
+  currentValue     Int
+  depreciationRate Decimal  @db.Decimal(5, 2)
+  companyId        String
+  company          Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  category    String
+  description String
+  amount      Int
+  date        DateTime
+  isPaid      Boolean  @default(false)
+  proofUrl    String?  @db.Text
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+}
+
+model LedgerEntry {
+  id            String     @id @default(cuid())
+  companyId     String
+  company       Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  type          LedgerType
+  amount        Int
+  balanceBefore Int
+  balanceAfter  Int
+  description   String
+  referenceId   String?
+  createdById   String?
+  createdAt     DateTime   @default(now())
+
+  @@index([companyId])
+  @@index([createdAt])
+}
+
+model AuditLog {
+  id          String      @id @default(cuid())
+  action      AuditAction
+  userEmail   String
+  userName    String?
+  companyName String?
+  ipAddress   String?
+  userAgent   String?
+  details     String?     @db.Text
+  userId      String?
+  companyId   String?
+  createdAt   DateTime    @default(now())
+
+  @@index([createdAt])
+  @@index([userEmail])
+  @@index([companyId])
+}
