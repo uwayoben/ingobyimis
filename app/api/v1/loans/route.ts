@@ -15,6 +15,7 @@ const createSchema = z.object({
   gracePeriodDays:        z.number().int().min(0).default(0),
   firstPaymentDate:       z.string(),           // ISO date string
   totalInstallments:      z.number().int().positive(),
+  penaltyRatePerDay:      z.number().min(0).max(100).default(0),
   collateralType:         z.string().optional(),
   collateralAmount:       z.number().int().optional(),
   eligibleCollateral:     z.number().int().optional(),
@@ -23,6 +24,11 @@ const createSchema = z.object({
     type:        z.enum(["fixed", "percentage"]),
     value:       z.number(),
     isRecurring: z.boolean().optional(),
+  })).optional(),
+  documents: z.array(z.object({
+    documentType: z.enum(["national_id", "passport", "employment_letter", "bank_statement", "collateral_proof", "other"]),
+    name:         z.string(),
+    url:          z.string().url(),
   })).optional(),
 });
 
@@ -146,6 +152,7 @@ export async function POST(request: Request) {
           balanceOutstanding:     d.amount,
           nextPaymentDate:        firstPaymentDate,
           nextPaymentAmount,
+          penaltyRatePerDay:      d.penaltyRatePerDay,
           collateralType:         d.collateralType,
           collateralAmount:       d.collateralAmount,
           eligibleCollateral:     d.eligibleCollateral,
@@ -169,6 +176,19 @@ export async function POST(request: Request) {
           totalDue:      row.totalDue,
         })),
       });
+
+      // Attach supporting documents
+      if (d.documents?.length) {
+        await tx.loanDocument.createMany({
+          data: d.documents.map((doc) => ({
+            loanId:       newLoan.id,
+            documentType: doc.documentType as any,
+            name:         doc.name,
+            url:          doc.url,
+            uploadedById: auth.userId,
+          })),
+        });
+      }
 
       // Notify MD for approval
       await tx.notification.create({

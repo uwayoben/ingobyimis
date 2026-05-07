@@ -1,12 +1,13 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Search, Filter, User, Users, TrendingUp, CreditCard, UserCheck, Loader2 } from "lucide-react";
+import { Plus, Search, Filter, User, Users, TrendingUp, CreditCard, UserCheck, Loader2, Upload } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { CustomerForm } from "@/components/customers/CustomerForm";
+import { ImportCustomersModal } from "@/components/customers/ImportCustomersModal";
 import Link from "next/link";
 import type { Customer } from "@/types";
 import { apiFetch } from "@/lib/api-fetch";
@@ -27,6 +28,7 @@ export default function CustomersPage() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [showModal, setShowModal] = useState(false);
+  const [showImport, setShowImport] = useState(false);
 
   const fetchCustomers = useCallback(async () => {
     setLoading(true);
@@ -94,6 +96,12 @@ export default function CustomersPage() {
             className="bg-white text-green-700 hover:bg-green-50 shadow-sm text-sm font-semibold px-4 py-2 rounded-xl inline-flex items-center gap-1.5 transition-colors"
           >
             <Plus className="w-4 h-4" /> Add Customer
+          </button>
+          <button
+            onClick={() => setShowImport(true)}
+            className="bg-white/20 hover:bg-white/30 backdrop-blur-sm border border-white/30 text-white text-sm font-semibold px-4 py-2 rounded-xl inline-flex items-center gap-1.5 transition-colors"
+          >
+            <Upload className="w-4 h-4" /> Import CSV
           </button>
         </div>
       </motion.div>
@@ -199,6 +207,13 @@ export default function CustomersPage() {
         <CustomerForm
           onClose={() => setShowModal(false)}
           onCreated={() => { setShowModal(false); fetchCustomers(); }}
+        />
+      </Modal>
+
+      <Modal isOpen={showImport} onClose={() => setShowImport(false)} title="Import Customers from CSV" size="lg">
+        <ImportCustomersModal
+          onClose={() => setShowImport(false)}
+          onImported={() => { fetchCustomers(); }}
         />
       </Modal>
     </div>

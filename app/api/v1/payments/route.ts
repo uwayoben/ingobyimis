@@ -79,25 +79,60 @@ export async function POST(request: Request) {
       where: { id: parsed.data.loanId, companyId: auth.companyId! },
     });
     if (!loan) return notFound("Loan not found.");
-    if (!["active", "overdue", "disbursed"].includes(loan.status)) {
+    // Also allow "completed" status here in case the loan was prematurely closed
+    // but still has outstanding balance, penalty, or flat-rate interest.
+    if (!["active", "overdue", "disbursed", "completed"].includes(loan.status)) {
       return badRequest("Payments can only be recorded on active or overdue loans.");
+    }
+    if (loan.status === "completed") {
+      const periodsPerYearCheck = 365 / loan.repaymentFrequencyDays;
+      const periodRateCheck     = Number(loan.annualInterestRate) / 100 / periodsPerYearCheck;
+      const stillOwed =
+        loan.balanceOutstanding +
+        (loan.interestMethod === "flat"
+          ? Math.max(0, (loan.totalRepayable - loan.amount) - loan.amountRepaidInterest)
+          : Math.round(loan.balanceOutstanding * periodRateCheck)) +
+        loan.penaltyAmount;
+      if (stillOwed <= 0) {
+        return badRequest("This loan is already fully paid.");
+      }
     }
 
     const { amount, loanId, method, reference, notes, date } = parsed.data;
     const paymentDate = date ? new Date(date) : new Date();
 
     // Auto-allocate: penalty → interest → principal
-    let remaining    = amount;
+    let remaining     = amount;
     const penaltyPaid = Math.min(remaining, loan.penaltyAmount);
-    remaining -= penaltyPaid;
+    remaining        -= penaltyPaid;
 
     const periodsPerYear = 365 / loan.repaymentFrequencyDays;
     const periodRate     = Number(loan.annualInterestRate) / 100 / periodsPerYear;
-    const interest       = Math.min(remaining, Math.round(loan.balanceOutstanding * periodRate));
-    remaining -= interest;
-    const principal      = Math.min(remaining, loan.balanceOutstanding);
 
-    const maxPayable = loan.penaltyAmount + Math.round(loan.balanceOutstanding * periodRate) + loan.balanceOutstanding;
+    // For flat rate: each period's interest is fixed on the ORIGINAL principal.
+    // For declining balance: interest accrues on the remaining balance.
+    let currentInterest: number;
+    let maxInterest: number;
+    if (loan.interestMethod === "flat") {
+      const totalFlatInterest     = loan.totalRepayable - loan.amount;
+      const remainingFlatInterest = Math.max(0, totalFlatInterest - loan.amountRepaidInterest);
+      const perPeriodInterest     = Math.round(loan.amount * periodRate);
+      currentInterest = Math.min(perPeriodInterest, remainingFlatInterest);
+      maxInterest     = remainingFlatInterest;
+    } else {
+      currentInterest = Math.round(loan.balanceOutstanding * periodRate);
+      maxInterest     = currentInterest;
+    }
+
+    // For flat-rate payoffs: when the payment covers all remaining (balance + all interest + penalty),
+    // credit the full remaining interest — not just one period — so the loan can close.
+    const isPayoff = amount >= (loan.penaltyAmount + maxInterest + loan.balanceOutstanding);
+    const interestToCredit = (loan.interestMethod === "flat" && isPayoff) ? maxInterest : currentInterest;
+    const interest  = Math.min(remaining, interestToCredit);
+    remaining      -= interest;
+    const principal = Math.min(remaining, loan.balanceOutstanding);
+
+    const maxPayable = loan.penaltyAmount + maxInterest + loan.balanceOutstanding;
     if (amount > maxPayable) {
       return badRequest(`Amount exceeds total owed. Maximum payment is RWF ${maxPayable.toLocaleString()}.`);
     }
@@ -105,12 +140,21 @@ export async function POST(request: Request) {
     const newBalance         = Math.max(0, loan.balanceOutstanding - principal);
     const newPrincipalRepaid = loan.amountRepaidPrincipal + principal;
     const newInterestRepaid  = loan.amountRepaidInterest  + interest;
-    const isFullyPaid        = newBalance === 0;
+    const newPenaltyAmount   = loan.penaltyAmount - penaltyPaid;
 
-    // BNR: recalculate days overdue & class
-    const daysOverdue = isFullyPaid ? 0 : loan.daysOverdue;
-    const { loanClass, provisioningRate } = classifyLoan(daysOverdue);
-    const provisionRequired = Math.round(newBalance * Number(provisioningRate) / 100);
+    // Flat-rate interest is contractually fixed — must all be paid before closing.
+    // Declining-balance interest accrues only on remaining principal, so when
+    // balance = 0 no more interest accrues and the loan can close.
+    const remainingFlatInterest =
+      loan.interestMethod === "flat"
+        ? Math.max(0, (loan.totalRepayable - loan.amount) - newInterestRepaid)
+        : 0;
+
+    const isFullyPaid =
+      newBalance === 0 && newPenaltyAmount === 0 && remainingFlatInterest === 0;
+
+    // Classification is determined inside the transaction after we know which
+    // installments remain overdue post-payment (computed below).
 
     const payment = await prisma.$transaction(async (tx) => {
       // Credit company account balance
@@ -176,6 +220,16 @@ export async function POST(request: Request) {
         });
       }
 
+      // For lump-sum payoffs (e.g. declining-balance early payoff), the payment amount may be
+      // less than the sum of scheduled installment totals because the schedule assumed per-period
+      // interest on a higher balance. Force-mark any stragglers so the schedule shows fully paid.
+      if (isFullyPaid) {
+        await tx.installment.updateMany({
+          where: { loanId, status: { in: ["pending", "partial", "overdue"] } },
+          data:  { status: "paid", paidDate: paymentDate },
+        });
+      }
+
       // Update loan
       const newInstallmentsPaid = await tx.installment.count({
         where: { loanId, status: "paid" },
@@ -187,23 +241,37 @@ export async function POST(request: Request) {
         orderBy: { installmentNo: "asc" },
       });
 
+      // Check if any overdue installments remain after this payment.
+      // If none remain (but loan not yet fully paid), the borrower has caught up
+      // and the loan should revert to Normal / active.
+      const stillOverdueCount = await tx.installment.count({
+        where: { loanId, status: "overdue" },
+      });
+      const caughtUp = !isFullyPaid && stillOverdueCount === 0;
+
+      const effectiveDaysOverdue = isFullyPaid || caughtUp ? 0 : loan.daysOverdue;
+      const { loanClass, provisioningRate } = classifyLoan(effectiveDaysOverdue);
+      const provisionRequired = Math.round(newBalance * Number(provisioningRate) / 100);
+
       await tx.loan.update({
         where: { id: loanId },
         data: {
           amountRepaidPrincipal: newPrincipalRepaid,
           amountRepaidInterest:  newInterestRepaid,
           balanceOutstanding:    newBalance,
-          penaltyAmount:         loan.penaltyAmount - penaltyPaid,
+          penaltyAmount:         newPenaltyAmount,
           installmentsPaid:      newInstallmentsPaid,
           lastPaymentDate:       paymentDate,
           nextPaymentDate:       nextInst?.dueDate ?? null,
           nextPaymentAmount:     nextInst?.totalDue ?? 0,
-          daysOverdue:           isFullyPaid ? 0 : daysOverdue,
-          arrearsStartDate:      isFullyPaid ? null : loan.arrearsStartDate,
+          daysOverdue:           effectiveDaysOverdue,
+          arrearsStartDate:      isFullyPaid || caughtUp ? null : loan.arrearsStartDate,
           loanClass,
           provisioningRate,
           provisionRequired,
-          status:                isFullyPaid ? "completed" : "active",
+          // Reset lastPenaltyCalculatedAt so the penalty counter restarts cleanly
+          ...(caughtUp && { lastPenaltyCalculatedAt: null }),
+          status: isFullyPaid ? "completed" : caughtUp ? "active" : "overdue",
         },
       });
 

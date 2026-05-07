@@ -1,13 +1,14 @@
 "use client";
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Phone, Mail, MapPin, Briefcase, CreditCard, TrendingUp, User, Heart, Building2, Loader2 } from "lucide-react";
+import { ArrowLeft, Phone, Mail, MapPin, Briefcase, CreditCard, TrendingUp, User, Heart, Building2, Loader2, Calculator, ChevronDown, ChevronUp } from "lucide-react";
 import Link from "next/link";
 import { formatDate, STATUS_COLORS, STATUS_LABELS } from "@/lib/utils";
 import { apiFetch } from "@/lib/api-fetch";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { generateSchedule, FREQUENCY_DAYS } from "@/lib/loan-schedule";
 
 function formatCurrency(n: number) {
   return "RWF " + n.toLocaleString();
@@ -18,6 +19,36 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   const router = useRouter();
   const [customer, setCustomer] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+
+  // Loan calculator state
+  const [calcOpen, setCalcOpen] = useState(false);
+  const [calcPrincipal, setCalcPrincipal] = useState("500000");
+  const [calcRate, setCalcRate] = useState("24");
+  const [calcMethod, setCalcMethod] = useState<"flat" | "declining">("declining");
+  const [calcFrequency, setCalcFrequency] = useState<"monthly" | "weekly" | "biweekly" | "daily">("monthly");
+  const [calcInstallments, setCalcInstallments] = useState("12");
+  const [calcFirstDate, setCalcFirstDate] = useState(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() + 1);
+    return d.toISOString().split("T")[0];
+  });
+
+  const calcSchedule = useMemo(() => {
+    const principal = parseInt(calcPrincipal) || 0;
+    const rate = parseFloat(calcRate) || 0;
+    const installments = parseInt(calcInstallments) || 1;
+    const freqDays = FREQUENCY_DAYS[calcFrequency] ?? 30;
+    if (principal <= 0 || installments <= 0) return [];
+    return generateSchedule(principal, rate, calcMethod, installments, new Date(calcFirstDate), freqDays);
+  }, [calcPrincipal, calcRate, calcMethod, calcFrequency, calcInstallments, calcFirstDate]);
+
+  const calcSummary = useMemo(() => {
+    if (!calcSchedule.length) return null;
+    const totalInterest = calcSchedule.reduce((s, r) => s + r.interestDue, 0);
+    const totalRepayable = calcSchedule.reduce((s, r) => s + r.totalDue, 0);
+    const emi = calcSchedule[0]?.totalDue ?? 0;
+    return { totalInterest, totalRepayable, emi };
+  }, [calcSchedule]);
 
   useEffect(() => {
     apiFetch(`/api/v1/customers/${id}`)
@@ -243,6 +274,135 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                 </tbody>
               </table>
             </div>
+          </Card>
+          {/* Loan Calculator */}
+          <Card>
+            <button
+              type="button"
+              className="w-full flex items-center justify-between px-6 py-4 text-left"
+              onClick={() => setCalcOpen((o) => !o)}
+            >
+              <div className="flex items-center gap-2">
+                <Calculator className="w-4 h-4 text-green-600 dark:text-green-400" />
+                <span className="font-semibold text-gray-900 dark:text-gray-100 text-sm">Loan Calculator</span>
+                <span className="text-xs text-gray-400">— estimate repayments for this customer</span>
+              </div>
+              {calcOpen ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+            </button>
+
+            {calcOpen && (
+              <div className="px-6 pb-6 space-y-6 border-t border-gray-100 dark:border-gray-800 pt-4">
+                {/* Inputs grid */}
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Principal (RWF)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={calcPrincipal}
+                      onChange={(e) => setCalcPrincipal(e.target.value)}
+                      className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-green-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Annual Rate (%)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.1}
+                      value={calcRate}
+                      onChange={(e) => setCalcRate(e.target.value)}
+                      className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-green-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Installments</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={calcInstallments}
+                      onChange={(e) => setCalcInstallments(e.target.value)}
+                      className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-green-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Interest Method</label>
+                    <select
+                      value={calcMethod}
+                      onChange={(e) => setCalcMethod(e.target.value as "flat" | "declining")}
+                      className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-green-500"
+                    >
+                      <option value="declining">Declining Balance</option>
+                      <option value="flat">Flat Rate</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Frequency</label>
+                    <select
+                      value={calcFrequency}
+                      onChange={(e) => setCalcFrequency(e.target.value as typeof calcFrequency)}
+                      className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-green-500"
+                    >
+                      <option value="monthly">Monthly</option>
+                      <option value="biweekly">Bi-weekly</option>
+                      <option value="weekly">Weekly</option>
+                      <option value="daily">Daily</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">First Payment Date</label>
+                    <input
+                      type="date"
+                      value={calcFirstDate}
+                      onChange={(e) => setCalcFirstDate(e.target.value)}
+                      className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-green-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Summary */}
+                {calcSummary && (
+                  <div className="grid grid-cols-3 gap-3">
+                    {[
+                      { label: "Installment (EMI)", value: formatCurrency(calcSummary.emi), color: "text-green-600 dark:text-green-400" },
+                      { label: "Total Interest", value: formatCurrency(calcSummary.totalInterest), color: "text-amber-600 dark:text-amber-400" },
+                      { label: "Total Repayable", value: formatCurrency(calcSummary.totalRepayable), color: "text-blue-600 dark:text-blue-400" },
+                    ].map((s) => (
+                      <div key={s.label} className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3 text-center">
+                        <p className={`text-base font-bold ${s.color}`}>{s.value}</p>
+                        <p className="text-[10px] text-gray-400 mt-0.5">{s.label}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Amortization table */}
+                {calcSchedule.length > 0 && (
+                  <div className="overflow-x-auto rounded-lg border border-gray-100 dark:border-gray-800">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-gray-50 dark:bg-gray-800">
+                          {["#", "Due Date", "Principal", "Interest", "Total Due"].map((h) => (
+                            <th key={h} className="text-left font-semibold text-gray-500 px-4 py-2">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                        {calcSchedule.map((row) => (
+                          <tr key={row.installmentNo} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+                            <td className="px-4 py-2 text-gray-400 font-medium">{row.installmentNo}</td>
+                            <td className="px-4 py-2 text-gray-700 dark:text-gray-300">{formatDate(row.dueDate.toISOString())}</td>
+                            <td className="px-4 py-2 text-gray-700 dark:text-gray-300">{formatCurrency(row.principalDue)}</td>
+                            <td className="px-4 py-2 text-amber-600 dark:text-amber-400">{formatCurrency(row.interestDue)}</td>
+                            <td className="px-4 py-2 font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(row.totalDue)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
           </Card>
         </div>
       </div>

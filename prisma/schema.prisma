@@ -60,6 +60,15 @@ enum FeeType {
   percentage
 }
 
+enum LoanDocumentType {
+  national_id
+  passport
+  employment_letter
+  bank_statement
+  collateral_proof
+  other
+}
+
 enum PaymentMethod {
   cash
   bank_transfer
@@ -88,6 +97,7 @@ enum LedgerType {
   disbursement
   repayment
   expense
+  waiver
 }
 
 // ─── Models ───────────────────────────────────────────────────────────────────
@@ -117,6 +127,8 @@ model Company {
 model User {
   id          String    @id @default(cuid())
   name        String
+
+  
   email       String    @unique
   password    String
   role        UserRole
@@ -206,13 +218,15 @@ model Loan {
   amountRepaidInterest    Int              @default(0)
   balanceOutstanding      Int              @default(0)
 
-  // Arrears
-  arrearsStartDate        DateTime?
-  daysOverdue             Int              @default(0)
-  lastPaymentDate         DateTime?
-  nextPaymentDate         DateTime?
-  nextPaymentAmount       Int              @default(0)
-  penaltyAmount           Int              @default(0)
+  // Arrears & penalty
+  arrearsStartDate          DateTime?
+  daysOverdue               Int              @default(0)
+  lastPaymentDate           DateTime?
+  nextPaymentDate           DateTime?
+  nextPaymentAmount         Int              @default(0)
+  penaltyAmount             Int              @default(0)
+  penaltyRatePerDay         Decimal          @db.Decimal(5,3) @default(0)   // % of overdue installment per day
+  lastPenaltyCalculatedAt   DateTime?                                        // last time auto-penalty was applied
 
   // Collateral
   collateralType          String?
@@ -240,6 +254,7 @@ model Loan {
   fees                    LoanFee[]
   payments                Payment[]
   installments            Installment[]
+  documents               LoanDocument[]
 }
 
 model Installment {
@@ -266,6 +281,17 @@ model LoanFee {
   type        FeeType
   value       Decimal  @db.Decimal(10, 2)
   isRecurring Boolean  @default(false)
+}
+
+model LoanDocument {
+  id           String           @id @default(cuid())
+  loanId       String
+  loan         Loan             @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  documentType LoanDocumentType
+  name         String
+  url          String           @db.Text
+  uploadedById String
+  createdAt    DateTime         @default(now())
 }
 
 model Payment {

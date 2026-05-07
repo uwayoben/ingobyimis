@@ -2,7 +2,6 @@ import { prisma } from "@/lib/prisma";
 import { badRequest, unauthorized, serverError } from "@/lib/api-response";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
-import { sendSms } from "@/lib/sms";
 
 const schema = z.object({
   email: z.string().email(),
@@ -104,18 +103,14 @@ export async function POST(request: Request) {
       details: "OTP sent",
     });
 
-    // Send OTP via InTouch SMS
-    const phone = user.phone?.replace(/\s+/g, "") ?? "";
-    if (phone) {
-      await sendSms(phone, `Your INGOBYI MIS login code is: ${otpCode}. Valid for 10 minutes. Do not share it.`);
-    }
-    console.log(`[OTP] User ${user.email}: ${otpCode}`); // always log for dev/support
+    console.log(`[OTP] User ${user.email}: ${otpCode}`);
 
     return Response.json({
       data: {
         message: "OTP sent to your registered phone number.",
         userId: user.id,
         maskedPhone: user.phone ? `+250 ${user.phone.slice(-3).padStart(9, "X")}` : null,
+        ...(process.env.NODE_ENV === "development" ? { devOtp: otpCode } : {}),
       },
     });
   } catch (e) {

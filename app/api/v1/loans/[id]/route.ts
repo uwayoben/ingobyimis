@@ -19,6 +19,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
         installments: { orderBy: { installmentNo: "asc" } },
         loanOfficer:  { select: { id: true, name: true, role: true } },
         approvedBy:   { select: { id: true, name: true, role: true } },
+        documents:    { orderBy: { createdAt: "asc" } },
       },
     });
 

@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   LayoutDashboard, Users, FileText, CreditCard, BarChart3, Settings,
   Building2, LogOut, Shield, ChevronLeft, ChevronRight,
-  Bell, BookOpen, Package, TrendingUp, AlertTriangle, X, Receipt,
+  Bell, BookOpen, Package, TrendingUp, AlertTriangle, X, Receipt, Calculator,
 } from "lucide-react";
 import { cn, ROLE_LABELS } from "@/lib/utils";
 import type { UserRole } from "@/types";
@@ -28,10 +28,11 @@ const ALL_NAV_ITEMS = [
   {
     group: "Operations",
     items: [
-      { href: "/customers", label: "Customers", icon: Users,          roles: ["managing_director", "loan_officer", "receptionist"] },
-      { href: "/loans",     label: "Loans",     icon: FileText,       roles: ["managing_director", "loan_officer", "receptionist"] },
-      { href: "/payments",  label: "Payments",  icon: CreditCard,     roles: ["managing_director", "loan_officer"] },
-      { href: "/penalties", label: "Penalties", icon: AlertTriangle,  roles: ["managing_director", "loan_officer"] },
+      { href: "/customers",       label: "Customers",       icon: Users,          roles: ["managing_director", "loan_officer", "receptionist"] },
+      { href: "/loans",           label: "Loans",           icon: FileText,       roles: ["managing_director", "loan_officer", "receptionist"] },
+      { href: "/loan-calculator", label: "Loan Calculator", icon: Calculator,     roles: ["managing_director", "loan_officer"] },
+      { href: "/payments",        label: "Payments",        icon: CreditCard,     roles: ["managing_director", "loan_officer"] },
+      { href: "/penalties",       label: "Penalties",       icon: AlertTriangle,  roles: ["managing_director", "loan_officer"] },
     ],
   },
   {

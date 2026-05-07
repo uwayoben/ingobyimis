@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
-import { ArrowLeft, Calculator, User, ChevronDown, ChevronUp, Search } from "lucide-react";
+import { ArrowLeft, Calculator, User, ChevronDown, ChevronUp, Search, Upload, FileText, X, Loader2, Paperclip } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -68,6 +68,24 @@ const FREQ_OPTIONS = [
   { value: "monthly",   label: "Monthly",   days: 30 },
   { value: "quarterly", label: "Quarterly", days: 90 },
 ];
+
+const DOC_TYPE_OPTIONS = [
+  { value: "national_id",       label: "National ID" },
+  { value: "passport",          label: "Passport" },
+  { value: "employment_letter", label: "Employment Letter" },
+  { value: "bank_statement",    label: "Bank Statement" },
+  { value: "collateral_proof",  label: "Collateral Proof" },
+  { value: "other",             label: "Other" },
+];
+
+const DOC_TYPE_LABELS: Record<string, string> = {
+  national_id:       "National ID",
+  passport:          "Passport",
+  employment_letter: "Employment Letter",
+  bank_statement:    "Bank Statement",
+  collateral_proof:  "Collateral Proof",
+  other:             "Other",
+};
 
 const COLLATERAL_OPTIONS = [
   { value: "",                                                    label: "— Select type —" },
@@ -333,6 +351,36 @@ export default function NewLoanPage() {
     ? [selected.village, selected.cell, selected.sector, selected.district, selected.province].filter(Boolean).join(", ")
     : null;
 
+  // ── Document upload state ──────────────────────────────────────────────────
+  type UploadedDoc = { type: string; name: string; url: string };
+  const [documents, setDocuments]         = useState<UploadedDoc[]>([]);
+  const [pendingDocType, setPendingDocType] = useState("national_id");
+  const [pendingDocFile, setPendingDocFile] = useState<File | null>(null);
+  const [uploading, setUploading]           = useState(false);
+  const [docError, setDocError]             = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleDocUpload = async () => {
+    if (!pendingDocFile) return;
+    setUploading(true);
+    setDocError("");
+    try {
+      const fd = new FormData();
+      fd.append("file", pendingDocFile);
+      fd.append("folder", "loan-documents");
+      const res  = await apiFetch("/api/v1/uploads", { method: "POST", body: fd });
+      const json = await res.json();
+      if (!res.ok) { setDocError(json.error || "Upload failed."); return; }
+      setDocuments((prev) => [...prev, { type: pendingDocType, name: pendingDocFile.name, url: json.data.url }]);
+      setPendingDocFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    } catch {
+      setDocError("Upload failed. Please try again.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -359,10 +407,14 @@ export default function NewLoanPage() {
           totalInstallments:      form.installments,
           gracePeriodDays:        0,
           firstPaymentDate:       form.firstPaymentDate,
+          penaltyRatePerDay:      form.penaltyRate || 0,
           collateralType:         form.collateralType  || undefined,
           collateralAmount:       form.collateralValue || undefined,
           eligibleCollateral:     form.collateralValue || undefined,
           fees,
+          documents: documents.length
+            ? documents.map((d) => ({ documentType: d.type, name: d.name, url: d.url }))
+            : undefined,
         }),
       });
       const json = await res.json();
@@ -656,6 +708,92 @@ export default function NewLoanPage() {
                   placeholder="Any additional remarks or conditions…"
                   className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
                 />
+              </div>
+            </Section>
+
+            {/* 7. Supporting Documents */}
+            <Section title="Supporting Documents" description="Upload ID cards, income proof, collateral documents and other supporting files" defaultOpen={true}>
+              <div className="space-y-4">
+                {/* Add document row */}
+                <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-3 items-end">
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-gray-700 dark:text-gray-300">Document Type</label>
+                    <select
+                      value={pendingDocType}
+                      onChange={(e) => setPendingDocType(e.target.value)}
+                      className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-green-500"
+                    >
+                      {DOC_TYPE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                      File <span className="text-gray-400 font-normal">(JPG, PNG, PDF · max 5 MB)</span>
+                    </label>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".jpg,.jpeg,.png,.webp,.pdf"
+                      onChange={(e) => setPendingDocFile(e.target.files?.[0] ?? null)}
+                      className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-green-500 file:mr-3 file:py-0.5 file:px-2 file:rounded-lg file:border-0 file:text-xs file:font-medium file:bg-green-50 file:text-green-700 dark:file:bg-green-900/30 dark:file:text-green-400 cursor-pointer"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleDocUpload}
+                    disabled={!pendingDocFile || uploading}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors whitespace-nowrap"
+                  >
+                    {uploading
+                      ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      : <Upload className="w-3.5 h-3.5" />}
+                    {uploading ? "Uploading…" : "Upload"}
+                  </button>
+                </div>
+
+                {docError && (
+                  <p className="text-xs text-red-600 dark:text-red-400">{docError}</p>
+                )}
+
+                {/* Uploaded documents list */}
+                {documents.length > 0 ? (
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                      {documents.length} document{documents.length !== 1 ? "s" : ""} attached
+                    </p>
+                    {documents.map((doc, i) => (
+                      <div key={i} className="flex items-center gap-3 p-3 rounded-xl bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700">
+                        <FileText className="w-4 h-4 text-green-600 dark:text-green-400 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium text-gray-700 dark:text-gray-300 truncate">{doc.name}</p>
+                          <p className="text-[10px] text-gray-400">{DOC_TYPE_LABELS[doc.type] ?? doc.type}</p>
+                        </div>
+                        <a
+                          href={doc.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-green-600 dark:text-green-400 hover:underline shrink-0"
+                        >
+                          View
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => setDocuments((prev) => prev.filter((_, j) => j !== i))}
+                          className="text-gray-400 hover:text-red-500 transition-colors shrink-0"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3 p-4 rounded-xl bg-gray-50 dark:bg-gray-800/50 border border-dashed border-gray-200 dark:border-gray-700">
+                    <Paperclip className="w-5 h-5 text-gray-300 shrink-0" />
+                    <p className="text-sm text-gray-400">No documents attached yet. Upload supporting documents above.</p>
+                  </div>
+                )}
               </div>
             </Section>
 

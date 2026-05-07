@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import {
   ArrowLeft, CheckCircle2, XCircle, Printer, ArrowDownToLine, Loader2,
   AlertTriangle, Banknote, TrendingDown, CreditCard, ArrowDownUp, FileText, ExternalLink,
+  MinusCircle,
 } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
@@ -22,14 +23,22 @@ function formatCurrency(n: number) {
   return "RWF " + Math.round(n).toLocaleString();
 }
 
-// True total owed = remaining repayable (principal + interest) + accrued penalty
-function trueOutstanding(loan: Loan): number {
-  return Math.max(0, loan.totalRepayable - loan.amountRepaidPrincipal - loan.amountRepaidInterest) + loan.penaltyAmount;
+function loanPeriodRate(loan: Loan): number {
+  return loan.annualInterestRate / 100 / (365 / loan.repaymentFrequencyDays);
 }
 
-// Interest still to be paid = total interest − interest already paid
+// For declining balance: only current-period interest accrues on the remaining balance.
+// For flat rate: all future interest is contractually fixed.
 function interestRemaining(loan: Loan): number {
-  return Math.max(0, loan.totalRepayable - loan.amount - loan.amountRepaidInterest);
+  if (loan.interestMethod === "flat") {
+    const totalFlatInterest = loan.totalRepayable - loan.amount;
+    return Math.max(0, totalFlatInterest - loan.amountRepaidInterest);
+  }
+  return Math.round(loan.balanceOutstanding * loanPeriodRate(loan));
+}
+
+function trueOutstanding(loan: Loan): number {
+  return loan.balanceOutstanding + interestRemaining(loan) + loan.penaltyAmount;
 }
 
 const INSTALLMENT_STATUS_COLOR: Record<string, string> = {
@@ -53,6 +62,15 @@ const CLASS_BADGE: Record<string, string> = {
   Substandard: "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400",
   Doubtful:    "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
   Loss:        "bg-rose-200 text-rose-900 dark:bg-rose-900/40 dark:text-rose-300",
+};
+
+const DOC_TYPE_LABELS: Record<string, string> = {
+  national_id:       "National ID",
+  passport:          "Passport",
+  employment_letter: "Employment Letter",
+  bank_statement:    "Bank Statement",
+  collateral_proof:  "Collateral Proof",
+  other:             "Other",
 };
 
 const METHOD_CONFIG: Record<string, { variant: "success" | "info" | "neutral"; label: string }> = {
@@ -224,6 +242,74 @@ function RecordPaymentForm({
   );
 }
 
+// ── Waiver Form ───────────────────────────────────────────────────────────────
+function WaiverForm({
+  loan,
+  onClose,
+  onSaved,
+}: {
+  loan: Loan;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [reason, setReason]   = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState("");
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    if (!reason.trim()) { setError("A reason is required."); return; }
+    setLoading(true);
+    try {
+      const res  = await apiFetch(`/api/v1/loans/${loan.id}/waive`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      });
+      const json = await res.json();
+      if (!res.ok) { setError(json.error || "Waiver failed."); return; }
+      onSaved();
+    } catch {
+      setError("Network error.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="p-6 space-y-4">
+      {error && (
+        <p className="text-xs text-red-600 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">{error}</p>
+      )}
+
+      <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4 space-y-1 text-xs">
+        <p className="font-semibold text-red-700 dark:text-red-300 mb-1">Penalty to Waive</p>
+        <div className="flex justify-between items-center">
+          <span className="text-red-600 dark:text-red-400">Outstanding Penalty</span>
+          <span className="text-lg font-bold text-red-600 dark:text-red-400">{formatCurrency(loan.penaltyAmount)}</span>
+        </div>
+        <p className="text-red-500 dark:text-red-500 mt-1">The full penalty amount will be written off.</p>
+      </div>
+
+      <Textarea
+        label="Reason (required)"
+        placeholder="State the reason for waiving this penalty..."
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        required
+      />
+
+      <div className="flex justify-end gap-3">
+        <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+        <Button type="submit" loading={loading} variant="danger" icon={<MinusCircle className="w-4 h-4" />}>
+          Waive Penalty
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 // ── Main Page ──────────────────────────────────────────────────────────────────
 export default function LoanDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -239,11 +325,12 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
   const [payments, setPayments]         = useState<(Payment & { recordedByName?: string })[]>([]);
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState("");
-  const [activeTab, setActiveTab]       = useState<"overview" | "schedule" | "payments" | "contract">("overview");
+  const [activeTab, setActiveTab]       = useState<"overview" | "schedule" | "payments" | "documents" | "contract">("overview");
   const [actionModal, setActionModal]   = useState<"approve" | "reject" | "disburse" | null>(null);
   const [actioning, setActioning]       = useState(false);
   const [actionError, setActionError]   = useState("");
-  const [showPayModal, setShowPayModal] = useState(false);
+  const [showPayModal,   setShowPayModal]   = useState(false);
+  const [showWaiveModal, setShowWaiveModal] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -267,7 +354,12 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
     }
   }, [id]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  // Reclassify before loading so the detail page shows the current classification
+  useEffect(() => {
+    apiFetch("/api/v1/cron/classify-loans", { method: "POST" })
+      .catch(() => {})
+      .finally(() => fetchData());
+  }, [fetchData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleAction = async (action: "approve" | "reject" | "disburse") => {
     setActioning(true);
@@ -316,7 +408,9 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
   const intRemaining   = interestRemaining(loan);
   const totalPaid      = loan.amountRepaidPrincipal + loan.amountRepaidInterest;
   const companyName   = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}").companyName ?? "MFI" : "MFI";
-  const canPayment    = ["active", "overdue", "disbursed"].includes(loan.status);
+  const canPayment    = ["active", "overdue", "disbursed"].includes(loan.status) ||
+    (loan.status === "completed" && trueOutstanding(loan) > 0);
+  const canWaive      = canApprove && ["active", "overdue", "completed"].includes(loan.status) && loan.penaltyAmount > 0;
 
   return (
     <div className="space-y-6">
@@ -341,6 +435,16 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
+          {canWaive && (
+            <Button
+              variant="outline"
+              size="sm"
+              icon={<MinusCircle className="w-4 h-4" />}
+              onClick={() => setShowWaiveModal(true)}
+            >
+              Waive
+            </Button>
+          )}
           {canPayment && canRecordPayment && (
             <Button
               size="sm"
@@ -419,7 +523,9 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                 <span className="font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(loan.balanceOutstanding)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-500">Interest Remaining</span>
+                <span className="text-gray-500">
+                  {loan.interestMethod === "flat" ? "Interest Remaining" : "Interest (this period)"}
+                </span>
                 <span className={cn("font-semibold", intRemaining > 0 ? "text-amber-600 dark:text-amber-400" : "text-gray-400")}>
                   {formatCurrency(intRemaining)}
                 </span>
@@ -449,20 +555,28 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
 
       {/* ── Tabs ──────────────────────────────────────────────────────── */}
       <div className="flex gap-1 border-b border-gray-200 dark:border-gray-800 overflow-x-auto">
-        {(["overview", "schedule", "payments", "contract"] as const).map((t) => (
-          <button
-            key={t}
-            onClick={() => setActiveTab(t)}
-            className={cn(
-              "px-4 py-2.5 text-sm font-medium capitalize transition-colors border-b-2 -mb-px whitespace-nowrap",
-              activeTab === t
-                ? "border-green-600 text-green-600 dark:text-green-400 dark:border-green-400"
-                : "border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
-            )}
-          >
-            {t === "schedule" ? "Payment Schedule" : t === "payments" ? `Payments (${payments.length})` : t.charAt(0).toUpperCase() + t.slice(1)}
-          </button>
-        ))}
+        {(["overview", "schedule", "payments", "documents", "contract"] as const).map((t) => {
+          const docs = (loan as any).documents ?? [];
+          const label =
+            t === "schedule"  ? "Payment Schedule" :
+            t === "payments"  ? `Payments (${payments.length})` :
+            t === "documents" ? `Documents (${docs.length})` :
+            t.charAt(0).toUpperCase() + t.slice(1);
+          return (
+            <button
+              key={t}
+              onClick={() => setActiveTab(t)}
+              className={cn(
+                "px-4 py-2.5 text-sm font-medium capitalize transition-colors border-b-2 -mb-px whitespace-nowrap",
+                activeTab === t
+                  ? "border-green-600 text-green-600 dark:text-green-400 dark:border-green-400"
+                  : "border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+              )}
+            >
+              {label}
+            </button>
+          );
+        })}
       </div>
 
       {/* ── Overview ──────────────────────────────────────────────────── */}
@@ -588,7 +702,57 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
           <Card>
             <CardHeader>
-              <CardTitle>Payment Schedule — {loan.totalInstallments} installments</CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle>Payment Schedule — {loan.totalInstallments} installments</CardTitle>
+                <button
+                  onClick={() => {
+                    const rows = installments.map((r, i) => `
+                      <tr style="background:${i % 2 === 0 ? "#ffffff" : "#f9fafb"}">
+                        <td style="padding:7px 12px;border-bottom:1px solid #e5e7eb">${r.installmentNo}</td>
+                        <td style="padding:7px 12px;border-bottom:1px solid #e5e7eb">${new Date(r.dueDate).toLocaleDateString()}</td>
+                        <td style="padding:7px 12px;border-bottom:1px solid #e5e7eb;color:#16a34a">RWF ${r.principalDue.toLocaleString()}</td>
+                        <td style="padding:7px 12px;border-bottom:1px solid #e5e7eb;color:#d97706">RWF ${r.interestDue.toLocaleString()}</td>
+                        <td style="padding:7px 12px;border-bottom:1px solid #e5e7eb;font-weight:600">RWF ${r.totalDue.toLocaleString()}</td>
+                        <td style="padding:7px 12px;border-bottom:1px solid #e5e7eb">${r.amountPaid > 0 ? "RWF " + r.amountPaid.toLocaleString() : "—"}</td>
+                        <td style="padding:7px 12px;border-bottom:1px solid #e5e7eb;text-transform:capitalize">${r.status}</td>
+                      </tr>`).join("");
+                    const totalDue  = installments.reduce((s, r) => s + r.totalDue, 0);
+                    const totalPrincipal = installments.reduce((s, r) => s + r.principalDue, 0);
+                    const totalInterest  = installments.reduce((s, r) => s + r.interestDue, 0);
+                    const w = window.open("", "_blank", "width=900,height=700");
+                    if (!w) return;
+                    w.document.write(`<!DOCTYPE html><html><head><title>Payment Schedule</title>
+                      <style>body{font-family:Arial,sans-serif;font-size:12px;color:#111;margin:24px}
+                      table{width:100%;border-collapse:collapse}
+                      th{background:#052e16;color:#fff;text-align:left;padding:9px 12px;font-size:11px}
+                      tfoot td{background:#f0fdf4;font-weight:700;padding:9px 12px;border-top:2px solid #16a34a}
+                      h2{margin:0 0 4px}p{margin:0 0 16px;color:#555;font-size:11px}
+                      @media print{button{display:none}}</style></head>
+                      <body>
+                        <h2>Payment Schedule</h2>
+                        <p>Loan: ${loan.id.toUpperCase()} &nbsp;·&nbsp; Customer: ${loan.customer?.names ?? ""} &nbsp;·&nbsp; ${loan.totalInstallments} installments</p>
+                        <table>
+                          <thead><tr>
+                            <th>#</th><th>Due Date</th><th>Principal</th><th>Interest</th><th>Total Due</th><th>Amount Paid</th><th>Status</th>
+                          </tr></thead>
+                          <tbody>${rows}</tbody>
+                          <tfoot><tr>
+                            <td colspan="2">TOTALS</td>
+                            <td>RWF ${totalPrincipal.toLocaleString()}</td>
+                            <td>RWF ${totalInterest.toLocaleString()}</td>
+                            <td>RWF ${totalDue.toLocaleString()}</td>
+                            <td colspan="2"></td>
+                          </tr></tfoot>
+                        </table>
+                        <script>window.onload=()=>window.print();</script>
+                      </body></html>`);
+                    w.document.close();
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-xs font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                >
+                  <Printer className="w-3.5 h-3.5" /> Print Schedule
+                </button>
+              </div>
             </CardHeader>
             <div className="overflow-x-auto">
               <table className="w-full">
@@ -716,6 +880,64 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
         </motion.div>
       )}
 
+      {/* ── Documents Tab ─────────────────────────────────────────────── */}
+      {activeTab === "documents" && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+          <Card>
+            <CardHeader><CardTitle>Supporting Documents</CardTitle></CardHeader>
+            <CardContent>
+              {(() => {
+                const docs: Array<{ id: string; documentType: string; name: string; url: string; createdAt: string }> =
+                  (loan as any).documents ?? [];
+                if (docs.length === 0) {
+                  return (
+                    <div className="flex flex-col items-center justify-center py-12 gap-3 text-center">
+                      <FileText className="w-10 h-10 text-gray-200 dark:text-gray-700" />
+                      <p className="text-sm text-gray-400">No documents were attached to this loan.</p>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="space-y-3">
+                    {docs.map((doc) => {
+                      const isPdf = doc.url.toLowerCase().includes(".pdf") || doc.name.toLowerCase().endsWith(".pdf");
+                      return (
+                        <div
+                          key={doc.id}
+                          className="flex items-center gap-4 p-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 hover:border-green-300 dark:hover:border-green-700 transition-colors"
+                        >
+                          <div className="w-10 h-10 rounded-lg bg-green-100 dark:bg-green-900/30 flex items-center justify-center shrink-0">
+                            <FileText className="w-5 h-5 text-green-600 dark:text-green-400" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{doc.name}</p>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                                {DOC_TYPE_LABELS[doc.documentType] ?? doc.documentType}
+                              </span>
+                              <span className="text-[10px] text-gray-400">{formatDate(doc.createdAt)}</span>
+                            </div>
+                          </div>
+                          <a
+                            href={doc.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white text-xs font-medium transition-colors shrink-0"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            {isPdf ? "View PDF" : "View"}
+                          </a>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </CardContent>
+          </Card>
+        </motion.div>
+      )}
+
       {/* ── Contract Tab ──────────────────────────────────────────────── */}
       {activeTab === "contract" && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
@@ -782,6 +1004,15 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
           loan={loan}
           onClose={() => setShowPayModal(false)}
           onSaved={() => { setShowPayModal(false); fetchData(); }}
+        />
+      </Modal>
+
+      {/* ── Waiver Modal ──────────────────────────────────────────────── */}
+      <Modal isOpen={showWaiveModal} onClose={() => setShowWaiveModal(false)} title="Waive Penalty" size="sm">
+        <WaiverForm
+          loan={loan}
+          onClose={() => setShowWaiveModal(false)}
+          onSaved={() => { setShowWaiveModal(false); fetchData(); }}
         />
       </Modal>
 

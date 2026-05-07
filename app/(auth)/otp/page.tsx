@@ -18,6 +18,7 @@ export default function OTPPage() {
   const [resending, setResending] = useState(false);
   const [userId, setUserId] = useState("");
   const [maskedPhone, setMaskedPhone] = useState("+250 78X XXX XXX");
+  const [devOtp, setDevOtp] = useState("");
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   useEffect(() => {
@@ -30,7 +31,12 @@ export default function OTPPage() {
     setUserId(id);
     setMaskedPhone(phone);
 
+    const dev = sessionStorage.getItem("otp_dev") || "";
     sessionStorage.removeItem("otp_dev");
+    if (dev && dev.length === OTP_LENGTH) {
+      setDevOtp(dev);
+      setDigits(dev.split(""));
+    }
   }, [router]);
 
   // Countdown timer
@@ -280,6 +286,16 @@ export default function OTPPage() {
               </div>
               <p className="text-[11px] text-gray-400 mt-1.5">{filled}/{OTP_LENGTH} digits entered</p>
             </div>
+
+            {/* Dev mode auto-fill banner */}
+            {devOtp && (
+              <div className="flex items-center gap-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg px-3 py-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 shrink-0">DEV</span>
+                <p className="text-xs text-amber-700 dark:text-amber-300">
+                  OTP auto-filled: <span className="font-mono font-bold">{devOtp}</span>
+                </p>
+              </div>
+            )}
 
             {/* Error */}
             {error && (

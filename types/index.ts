@@ -131,6 +131,8 @@ export interface Loan {
   nextPaymentDate?: string;
   nextPaymentAmount: number;
   penaltyAmount: number;
+  penaltyRatePerDay: number;
+  lastPenaltyCalculatedAt?: string;
   collateralType?: string;
   collateralAmount?: number;
   eligibleCollateral?: number;

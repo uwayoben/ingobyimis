@@ -1,21 +1,30 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Search, FileText, Loader2, AlertTriangle, CheckCircle2, Clock, Banknote, ChevronDown } from "lucide-react";
+import { Plus, Search, FileText, Loader2, AlertTriangle, CheckCircle2, Clock, Banknote, ChevronDown, Upload } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { Modal } from "@/components/ui/Modal";
 import { STATUS_COLORS, STATUS_LABELS, formatDate } from "@/lib/utils";
 import type { Loan, LoanStatus } from "@/types";
 import { apiFetch } from "@/lib/api-fetch";
 import { useRole } from "@/components/RoleContext";
+import { ImportLoansModal } from "@/components/loans/ImportLoansModal";
 
 function formatCurrency(n: number) {
   return "RWF " + n.toLocaleString();
 }
 
-// True total owed = remaining repayable + accrued penalty
+function loanPeriodRate(loan: Loan): number {
+  return loan.annualInterestRate / 100 / (365 / loan.repaymentFrequencyDays);
+}
+
 function trueOutstanding(loan: Loan): number {
-  return Math.max(0, loan.totalRepayable - loan.amountRepaidPrincipal - loan.amountRepaidInterest) + loan.penaltyAmount;
+  if (loan.status === "completed") return 0;
+  const interestRemaining = loan.interestMethod === "flat"
+    ? Math.max(0, (loan.totalRepayable - loan.amount) - loan.amountRepaidInterest)
+    : Math.round(loan.balanceOutstanding * loanPeriodRate(loan));
+  return loan.balanceOutstanding + interestRemaining + loan.penaltyAmount;
 }
 
 function freqLabel(days: number) {
@@ -67,6 +76,7 @@ export default function LoansPage() {
   const [search, setSearch]     = useState("");
   const [tab, setTab]           = useState<LoanStatus | "all">("all");
   const [classFilter, setClassFilter] = useState("All Classes");
+  const [showImport, setShowImport]   = useState(false);
 
   const fetchLoans = useCallback(async () => {
     setLoading(true);
@@ -88,6 +98,13 @@ export default function LoansPage() {
     const t = setTimeout(fetchLoans, search ? 300 : 0);
     return () => clearTimeout(t);
   }, [fetchLoans]);
+
+  // Reclassify loans in the background every time this page mounts
+  useEffect(() => {
+    apiFetch("/api/v1/cron/classify-loans", { method: "POST" })
+      .then(() => fetchLoans())   // refresh list after classification updates
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const displayed = classFilter === "All Classes"
     ? loans
@@ -143,12 +160,20 @@ export default function LoansPage() {
             {totalPenalty > 0 && <span className="text-red-300 ml-2">· {formatCurrency(totalPenalty)} in penalties</span>}
           </p>
           {canCreateLoan && (
-            <Link
-              href="/loans/new"
-              className="bg-white text-green-700 hover:bg-green-50 shadow-sm text-sm font-semibold px-4 py-2 rounded-xl inline-flex items-center gap-1.5 transition-colors"
-            >
-              <Plus className="w-4 h-4" /> New Loan
-            </Link>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowImport(true)}
+                className="bg-white/20 hover:bg-white/30 text-white text-sm font-semibold px-4 py-2 rounded-xl inline-flex items-center gap-1.5 transition-colors"
+              >
+                <Upload className="w-4 h-4" /> Import
+              </button>
+              <Link
+                href="/loans/new"
+                className="bg-white text-green-700 hover:bg-green-50 shadow-sm text-sm font-semibold px-4 py-2 rounded-xl inline-flex items-center gap-1.5 transition-colors"
+              >
+                <Plus className="w-4 h-4" /> New Loan
+              </Link>
+            </div>
           )}
         </div>
       </motion.div>
@@ -371,6 +396,15 @@ export default function LoansPage() {
           </div>
         )}
       </div>
+
+      <Modal isOpen={showImport} onClose={() => setShowImport(false)} title="Import Loans" size="lg">
+        <div className="p-6">
+          <ImportLoansModal
+            onClose={() => setShowImport(false)}
+            onImported={() => { setShowImport(false); fetchLoans(); }}
+          />
+        </div>
+      </Modal>
     </div>
   );
 }
