@@ -7,7 +7,7 @@ export async function sendSms(recipient: string, message: string): Promise<boole
     const url      = process.env.SMS_URL      ?? "https://www.intouchsms.co.rw/api/sendsms/.json";
     const username = process.env.SMS_USERNAME ?? "";
     const password = process.env.SMS_PASSWORD ?? "";
-    const sender   = process.env.SMS_SENDER   ?? "INGOBYI";
+    const sender   = process.env.SMS_SENDER   ?? "IPFUNDO";
 
     const body = new URLSearchParams({
       sender,

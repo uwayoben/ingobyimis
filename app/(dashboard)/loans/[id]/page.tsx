@@ -27,14 +27,8 @@ function loanPeriodRate(loan: Loan): number {
   return loan.annualInterestRate / 100 / (365 / loan.repaymentFrequencyDays);
 }
 
-// For declining balance: only current-period interest accrues on the remaining balance.
-// For flat rate: all future interest is contractually fixed.
 function interestRemaining(loan: Loan): number {
-  if (loan.interestMethod === "flat") {
-    const totalFlatInterest = loan.totalRepayable - loan.amount;
-    return Math.max(0, totalFlatInterest - loan.amountRepaidInterest);
-  }
-  return Math.round(loan.balanceOutstanding * loanPeriodRate(loan));
+  return Math.max(0, (loan.totalRepayable - loan.amount) - loan.amountRepaidInterest);
 }
 
 function trueOutstanding(loan: Loan): number {
@@ -101,11 +95,18 @@ function RecordPaymentForm({
   const amt          = Math.min(Number(amount) || 0, totalOuts);
   const penaltyPaid  = Math.min(amt, penalty);
   const afterPenalty = amt - penaltyPaid;
-  // Interest for this payment period (used for allocation preview)
-  const periodsPerYear = 365 / loan.repaymentFrequencyDays;
-  const periodRate     = Number(loan.annualInterestRate) / 100 / periodsPerYear;
-  const interest   = Math.min(afterPenalty, Math.round(loan.balanceOutstanding * periodRate));
-  const principal  = afterPenalty - interest;
+  // Interest allocation preview: per-period for declining, capped at remaining scheduled interest
+  const periodsPerYear    = 365 / loan.repaymentFrequencyDays;
+  const periodRate        = Number(loan.annualInterestRate) / 100 / periodsPerYear;
+  const remainingInt      = Math.max(0, (loan.totalRepayable - loan.amount) - loan.amountRepaidInterest);
+  const periodInterest    = loan.balanceOutstanding > 0
+    ? Math.round(loan.balanceOutstanding * periodRate)
+    : remainingInt;
+  const currentInt        = Math.min(periodInterest, remainingInt);
+  const maxInt            = remainingInt;
+  const isPayoffPreview   = amt >= (penalty + maxInt + loan.balanceOutstanding);
+  const interest          = Math.min(afterPenalty, isPayoffPreview ? maxInt : currentInt);
+  const principal         = afterPenalty - interest;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -407,7 +408,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
   const totalOuts      = trueOutstanding(loan);
   const intRemaining   = interestRemaining(loan);
   const totalPaid      = loan.amountRepaidPrincipal + loan.amountRepaidInterest;
-  const companyName   = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}").companyName ?? "MFI" : "MFI";
+  const companyName   = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}").companyName ?? "NDF" : "NDF";
   const canPayment    = ["active", "overdue", "disbursed"].includes(loan.status) ||
     (loan.status === "completed" && trueOutstanding(loan) > 0);
   const canWaive      = canApprove && ["active", "overdue", "completed"].includes(loan.status) && loan.penaltyAmount > 0;

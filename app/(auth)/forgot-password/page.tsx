@@ -173,7 +173,7 @@ export default function ForgotPasswordPage() {
             <TrendingUp className="w-5 h-5 text-white" />
           </div>
           <div>
-            <p className="font-bold text-white text-lg leading-none">Ingobyi MIS</p>
+            <p className="font-bold text-white text-lg leading-none">ipfundoMIS</p>
             <p className="text-[11px] text-green-400/70 mt-0.5">Management Information System</p>
           </div>
         </div>
@@ -233,7 +233,7 @@ export default function ForgotPasswordPage() {
           <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-green-400 to-green-600 flex items-center justify-center shadow-md">
             <TrendingUp className="w-4 h-4 text-white" />
           </div>
-          <p className="font-bold text-gray-900 dark:text-white text-base">Ingobyi MIS</p>
+          <p className="font-bold text-gray-900 dark:text-white text-base">ipfundoMIS</p>
         </div>
 
         <motion.div

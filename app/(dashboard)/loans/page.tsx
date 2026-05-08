@@ -21,9 +21,7 @@ function loanPeriodRate(loan: Loan): number {
 
 function trueOutstanding(loan: Loan): number {
   if (loan.status === "completed") return 0;
-  const interestRemaining = loan.interestMethod === "flat"
-    ? Math.max(0, (loan.totalRepayable - loan.amount) - loan.amountRepaidInterest)
-    : Math.round(loan.balanceOutstanding * loanPeriodRate(loan));
+  const interestRemaining = Math.max(0, (loan.totalRepayable - loan.amount) - loan.amountRepaidInterest);
   return loan.balanceOutstanding + interestRemaining + loan.penaltyAmount;
 }
 

@@ -71,7 +71,7 @@ export default function LoginPage() {
             <TrendingUp className="w-5 h-5 text-white" />
           </div>
           <div>
-            <p className="font-bold text-white text-lg leading-none">Ingobyi MIS</p>
+            <p className="font-bold text-white text-lg leading-none">ipfundoMIS</p>
             <p className="text-[11px] text-green-400/70 mt-0.5">Management Information System</p>
           </div>
         </motion.div>
@@ -85,7 +85,7 @@ export default function LoginPage() {
         >
           <div className="inline-flex items-center gap-2 bg-green-500/15 border border-green-500/20 rounded-full px-3 py-1.5 mb-6">
             <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-            <span className="text-xs text-green-300 font-medium">Trusted by MFIs across Rwanda</span>
+            <span className="text-xs text-green-300 font-medium">Trusted by NDFs across Rwanda</span>
           </div>
 
           <h1 className="text-4xl font-bold text-white leading-[1.15] mb-4">
@@ -140,7 +140,7 @@ export default function LoginPage() {
             <TrendingUp className="w-4.5 h-4.5 text-white" />
           </div>
           <div>
-            <p className="font-bold text-gray-900 dark:text-white text-base leading-none">Ingobyi MIS</p>
+            <p className="font-bold text-gray-900 dark:text-white text-base leading-none">ipfundoMIS</p>
             <p className="text-[10px] text-gray-400 mt-0.5">Management Information System</p>
           </div>
         </div>

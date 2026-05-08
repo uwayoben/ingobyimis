@@ -95,7 +95,7 @@ function AddCompanyForm({ onClose, onCreated }: { onClose: () => void; onCreated
       <div>
         <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">Company Details</p>
         <div className="space-y-3">
-          <Input label="Company Name" placeholder="MFI Company Ltd" required value={form.name} onChange={set("name")} />
+          <Input label="Company Name" placeholder="NDF Company Ltd" required value={form.name} onChange={set("name")} />
           <div className="grid grid-cols-2 gap-3">
             <Input label="Email" type="email" placeholder="info@company.rw" required value={form.email} onChange={set("email")} />
             <Input label="Phone" placeholder="+250788000000" required value={form.phone} onChange={set("phone")} />

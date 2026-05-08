@@ -78,12 +78,12 @@ export function Sidebar({ onMobileClose }: { onMobileClose?: () => void }) {
   const RoleIcon = ROLE_ICONS[role] ?? Shield;
 
   const companyName = storedUser?.role === "super_admin"
-    ? "MFI Platform"
+    ? "NDF Platform"
     : (storedUser?.companyName ?? "");
 
   const companySubtitle = storedUser?.role === "super_admin"
     ? "System Administration"
-    : "MFI Platform";
+    : "NDF Platform";
 
   const handleLogout = async () => {
     await fetch("/api/v1/auth/logout", { method: "POST" });

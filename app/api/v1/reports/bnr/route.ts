@@ -273,7 +273,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const reportingDateStr =
       searchParams.get("reportingDate") ?? new Date().toISOString().split("T")[0];
-    const institutionName = searchParams.get("institutionName") ?? "MFI Institution";
+    const institutionName = searchParams.get("institutionName") ?? "NDF Institution";
     const sector   = searchParams.get("sector")   ?? "";
     const district = searchParams.get("district") ?? "";
     const cutoffDate = new Date(reportingDateStr);

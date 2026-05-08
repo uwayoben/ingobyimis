@@ -37,7 +37,14 @@ function RecordPaymentForm({ onClose, onSaved }: { onClose: () => void; onSaved:
   const afterPenalty = amt - penalty;
   const periodsPerYear = 365 / (loan?.repaymentFrequencyDays ?? 30);
   const periodRate = loan ? (loan.annualInterestRate / 100 / periodsPerYear) : 0;
-  const interest = loan ? Math.min(afterPenalty, Math.round(loan.balanceOutstanding * periodRate)) : 0;
+  const remainingInt = loan ? Math.max(0, (loan.totalRepayable - loan.amount) - loan.amountRepaidInterest) : 0;
+  const periodInt = loan && loan.balanceOutstanding > 0
+    ? Math.round(loan.balanceOutstanding * periodRate)
+    : remainingInt;
+  const currentInt = Math.min(periodInt, remainingInt);
+  const maxInt = remainingInt;
+  const isPayoffPreview = loan ? amt >= (loan.penaltyAmount + maxInt + loan.balanceOutstanding) : false;
+  const interest = loan ? Math.min(afterPenalty, isPayoffPreview ? maxInt : currentInt) : 0;
   const principal = afterPenalty - interest;
 
   const handleSubmit = async (e: React.FormEvent) => {

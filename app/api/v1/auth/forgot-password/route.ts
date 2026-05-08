@@ -31,7 +31,7 @@ export async function POST(request: Request) {
 
     const phone = user.phone?.replace(/\s+/g, "") ?? "";
     if (phone) {
-      await sendSms(phone, `Your INGOBYI MIS password reset code is: ${otpCode}. Valid for 10 minutes. Do not share it.`);
+      await sendSms(phone, `Your ipfundoMIS password reset code is: ${otpCode}. Valid for 10 minutes. Do not share it.`);
     }
     console.log(`[RESET OTP] ${parsed.data.email}: ${otpCode}`);
 

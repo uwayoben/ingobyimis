@@ -25,7 +25,7 @@ async function main() {
     where: { email: "contact@ubuzima.rw" },
     update: {},
     create: {
-      name: "Ubuzima MFI",
+      name: "Ubuzima NDFs",
       email: "contact@ubuzima.rw",
       phone: "+250 788 000 002",
       address: "KN 5 Rd, Kigali, Rwanda",

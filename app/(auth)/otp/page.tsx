@@ -151,7 +151,7 @@ export default function OTPPage() {
               <TrendingUp className="w-5 h-5 text-white" />
             </div>
             <div>
-              <p className="font-bold text-white text-lg leading-none">Ingobyi MIS</p>
+              <p className="font-bold text-white text-lg leading-none">ipfundoMIS</p>
               <p className="text-[11px] text-green-400/70 mt-0.5">Management Information System</p>
             </div>
           </div>
@@ -218,7 +218,7 @@ export default function OTPPage() {
             <TrendingUp className="w-4 h-4 text-white" />
           </div>
           <div>
-            <p className="font-bold text-gray-900 dark:text-white text-base leading-none">Ingobyi MIS</p>
+            <p className="font-bold text-gray-900 dark:text-white text-base leading-none">ipfundoMIS</p>
             <p className="text-[10px] text-gray-400 mt-0.5">Management Information System</p>
           </div>
         </div>
@@ -358,7 +358,7 @@ export default function OTPPage() {
           <div className="mt-6 flex items-start gap-3 bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-800/50 rounded-xl p-3.5">
             <ShieldCheck className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
             <p className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
-              Never share your OTP with anyone. INGOBYI MIS staff will never ask for your code.
+              Never share your OTP with anyone. ipfundoMIS staff will never ask for your code.
             </p>
           </div>
         </motion.div>

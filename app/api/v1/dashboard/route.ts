@@ -76,7 +76,7 @@ export async function GET(request: Request) {
       // All-time running balances
       outstandingAgg, repaidAgg, outstandingPrincipalAgg,
       // Period-filtered
-      penaltyAgg, expensesAgg, feesAgg,
+      penaltyAgg, expensesAgg, feeRecords,
       // Misc
       totalCustomers, disbursedTodayAgg, allTimeCollectedAgg,
     ] = await Promise.all([
@@ -109,9 +109,18 @@ export async function GET(request: Request) {
       // Period-filtered payments & expenses
       prisma.payment.aggregate({ where: payWhere, _sum: { penalty: true, interest: true } }),
       prisma.expense.aggregate({ where: expWhere, _sum: { amount: true } }),
-      prisma.loanFee.aggregate({
+      // Fetch fee records with loan data to compute actual RWF amounts:
+      // percentage fees store a rate (e.g. 2.5 for 2.5%) not a cash amount, so we
+      // must compute: fixed → value; percentage → loan.amount × rate / 100.
+      // Recurring fees are multiplied by installmentsPaid.
+      prisma.loanFee.findMany({
         where: { loan: { companyId: cid, ...(range ? { createdAt: range } : {}) } },
-        _sum: { value: true },
+        select: {
+          type: true,
+          value: true,
+          isRecurring: true,
+          loan: { select: { amount: true, installmentsPaid: true } },
+        },
       }),
       // Misc
       prisma.customer.count({ where: { companyId: cid } }),
@@ -138,7 +147,13 @@ export async function GET(request: Request) {
     const totalPrincipalPaid = repaidAgg._sum.amountRepaidPrincipal ?? 0;
     const totalInterestPaid  = repaidAgg._sum.amountRepaidInterest  ?? 0;
     const totalPenaltyPaid = penaltyAgg._sum.penalty ?? 0;
-    const totalFees = Number(feesAgg._sum.value ?? 0);
+    const totalFees = feeRecords.reduce((sum, fee) => {
+      const base = fee.type === "percentage"
+        ? Math.round(fee.loan.amount * Number(fee.value) / 100)
+        : Math.round(Number(fee.value));
+      const times = fee.isRecurring ? Math.max(1, fee.loan.installmentsPaid) : 1;
+      return sum + base * times;
+    }, 0);
     const totalExpenses = expensesAgg._sum.amount ?? 0;
     const totalEarnings = totalInterestPaid + totalFees + totalPenaltyPaid;
     const netProfit = totalEarnings - totalExpenses;

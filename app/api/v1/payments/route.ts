@@ -85,14 +85,8 @@ export async function POST(request: Request) {
       return badRequest("Payments can only be recorded on active or overdue loans.");
     }
     if (loan.status === "completed") {
-      const periodsPerYearCheck = 365 / loan.repaymentFrequencyDays;
-      const periodRateCheck     = Number(loan.annualInterestRate) / 100 / periodsPerYearCheck;
-      const stillOwed =
-        loan.balanceOutstanding +
-        (loan.interestMethod === "flat"
-          ? Math.max(0, (loan.totalRepayable - loan.amount) - loan.amountRepaidInterest)
-          : Math.round(loan.balanceOutstanding * periodRateCheck)) +
-        loan.penaltyAmount;
+      const remainingInterestCheck = Math.max(0, (loan.totalRepayable - loan.amount) - loan.amountRepaidInterest);
+      const stillOwed = loan.balanceOutstanding + remainingInterestCheck + loan.penaltyAmount;
       if (stillOwed <= 0) {
         return badRequest("This loan is already fully paid.");
       }
@@ -109,25 +103,28 @@ export async function POST(request: Request) {
     const periodsPerYear = 365 / loan.repaymentFrequencyDays;
     const periodRate     = Number(loan.annualInterestRate) / 100 / periodsPerYear;
 
-    // For flat rate: each period's interest is fixed on the ORIGINAL principal.
-    // For declining balance: interest accrues on the remaining balance.
-    let currentInterest: number;
-    let maxInterest: number;
-    if (loan.interestMethod === "flat") {
-      const totalFlatInterest     = loan.totalRepayable - loan.amount;
-      const remainingFlatInterest = Math.max(0, totalFlatInterest - loan.amountRepaidInterest);
-      const perPeriodInterest     = Math.round(loan.amount * periodRate);
-      currentInterest = Math.min(perPeriodInterest, remainingFlatInterest);
-      maxInterest     = remainingFlatInterest;
-    } else {
-      currentInterest = Math.round(loan.balanceOutstanding * periodRate);
-      maxInterest     = currentInterest;
-    }
+    // Both methods track total scheduled interest. For flat: fixed on original principal.
+    // For declining: sum of per-period interest across all installments (stored in totalRepayable).
+    const totalScheduledInterest = loan.totalRepayable - loan.amount;
+    const remainingInterest      = Math.max(0, totalScheduledInterest - loan.amountRepaidInterest);
 
-    // For flat-rate payoffs: when the payment covers all remaining (balance + all interest + penalty),
-    // credit the full remaining interest — not just one period — so the loan can close.
+    let currentInterest: number;
+    if (loan.interestMethod === "flat") {
+      const perPeriodInterest = Math.round(loan.amount * periodRate);
+      currentInterest = Math.min(perPeriodInterest, remainingInterest);
+    } else {
+      // Per-period interest on remaining balance; when balance is 0 allow any amount toward interest.
+      const periodInterest = loan.balanceOutstanding > 0
+        ? Math.round(loan.balanceOutstanding * periodRate)
+        : remainingInterest;
+      currentInterest = Math.min(periodInterest, remainingInterest);
+    }
+    const maxInterest = remainingInterest;
+
+    // When the payment covers all remaining (balance + all interest + penalty), credit all interest
+    // so the loan can close — applies to both flat and declining balance.
     const isPayoff = amount >= (loan.penaltyAmount + maxInterest + loan.balanceOutstanding);
-    const interestToCredit = (loan.interestMethod === "flat" && isPayoff) ? maxInterest : currentInterest;
+    const interestToCredit = isPayoff ? maxInterest : currentInterest;
     const interest  = Math.min(remaining, interestToCredit);
     remaining      -= interest;
     const principal = Math.min(remaining, loan.balanceOutstanding);
@@ -142,16 +139,9 @@ export async function POST(request: Request) {
     const newInterestRepaid  = loan.amountRepaidInterest  + interest;
     const newPenaltyAmount   = loan.penaltyAmount - penaltyPaid;
 
-    // Flat-rate interest is contractually fixed — must all be paid before closing.
-    // Declining-balance interest accrues only on remaining principal, so when
-    // balance = 0 no more interest accrues and the loan can close.
-    const remainingFlatInterest =
-      loan.interestMethod === "flat"
-        ? Math.max(0, (loan.totalRepayable - loan.amount) - newInterestRepaid)
-        : 0;
-
-    const isFullyPaid =
-      newBalance === 0 && newPenaltyAmount === 0 && remainingFlatInterest === 0;
+    // Both flat and declining require all scheduled interest to be paid before closing.
+    const remainingInterestAfter = Math.max(0, totalScheduledInterest - newInterestRepaid);
+    const isFullyPaid = newBalance === 0 && newPenaltyAmount === 0 && remainingInterestAfter === 0;
 
     // Classification is determined inside the transaction after we know which
     // installments remain overdue post-payment (computed below).

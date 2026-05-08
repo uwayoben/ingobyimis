@@ -6,7 +6,7 @@ import type {
 export const CURRENT_USER: User = {
   id: "u1",
   name: "Jean Pierre Habimana",
-  email: "jp.habimana@ingobyi.rw",
+  email: "jp.habimana@ipfundo.rw",
   role: "managing_director",
   companyId: "c1",
   avatar: "",
@@ -18,7 +18,7 @@ export const COMPANIES: Company[] = [
   {
     id: "c1",
     name: "Ingobyi Finance Ltd",
-    email: "info@ingobyi.rw",
+    email: "info@ipfundo.rw",
     phone: "+250 788 000 001",
     address: "KG 12 Ave, Kigali, Rwanda",
     employeeCount: 24,
@@ -29,7 +29,7 @@ export const COMPANIES: Company[] = [
   },
   {
     id: "c2",
-    name: "Ubuzima MFI",
+    name: "Ubuzima NDFs",
     email: "contact@ubuzima.rw",
     phone: "+250 788 000 002",
     address: "KN 5 Rd, Kigali, Rwanda",
@@ -54,11 +54,11 @@ export const COMPANIES: Company[] = [
 ];
 
 export const USERS: User[] = [
-  { id: "u1", name: "Jean Pierre Habimana", email: "jp@ingobyi.rw", role: "managing_director", companyId: "c1", createdAt: "2024-01-15" },
-  { id: "u2", name: "Alice Mukamana", email: "alice@ingobyi.rw", role: "loan_officer", companyId: "c1", createdAt: "2024-02-01" },
-  { id: "u3", name: "Eric Niyonzima", email: "eric@ingobyi.rw", role: "loan_officer", companyId: "c1", createdAt: "2024-02-15" },
-  { id: "u4", name: "Grace Uwimana", email: "grace@ingobyi.rw", role: "receptionist", companyId: "c1", createdAt: "2024-03-01" },
-  { id: "u5", name: "David Ishimwe", email: "david@ingobyi.rw", role: "shareholder", companyId: "c1", createdAt: "2024-01-20" },
+  { id: "u1", name: "Jean Pierre Habimana", email: "jp@ipfundo.rw", role: "managing_director", companyId: "c1", createdAt: "2024-01-15" },
+  { id: "u2", name: "Alice Mukamana", email: "alice@ipfundo.rw", role: "loan_officer", companyId: "c1", createdAt: "2024-02-01" },
+  { id: "u3", name: "Eric Niyonzima", email: "eric@ipfundo.rw", role: "loan_officer", companyId: "c1", createdAt: "2024-02-15" },
+  { id: "u4", name: "Grace Uwimana", email: "grace@ipfundo.rw", role: "receptionist", companyId: "c1", createdAt: "2024-03-01" },
+  { id: "u5", name: "David Ishimwe", email: "david@ipfundo.rw", role: "shareholder", companyId: "c1", createdAt: "2024-01-20" },
 ];
 
 export const CUSTOMERS: Customer[] = [
