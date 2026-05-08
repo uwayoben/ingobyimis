@@ -1,16 +1,6 @@
 "use client";
-import { createContext, useContext, useState, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import type { UserRole } from "@/types";
-
-function getInitialRole(): UserRole {
-  if (typeof window !== "undefined") {
-    try {
-      const stored = JSON.parse(localStorage.getItem("user") || "{}");
-      if (stored?.role) return stored.role as UserRole;
-    } catch {}
-  }
-  return "loan_officer";
-}
 
 interface RoleContextValue {
   role: UserRole;
@@ -19,7 +9,15 @@ interface RoleContextValue {
 const RoleContext = createContext<RoleContextValue>({ role: "loan_officer" });
 
 export function RoleProvider({ children }: { children: ReactNode }) {
-  const [role] = useState<UserRole>(getInitialRole);
+  const [role, setRole] = useState<UserRole>("loan_officer");
+
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem("user") || "{}");
+      if (stored?.role) setRole(stored.role as UserRole);
+    } catch {}
+  }, []);
+
   return <RoleContext.Provider value={{ role }}>{children}</RoleContext.Provider>;
 }
 

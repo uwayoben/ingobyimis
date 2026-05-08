@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { Prisma } from '@prisma/client';
 import { getAuthUser } from "@/lib/auth";
 import { ok, unauthorized, badRequest, forbidden, serverError } from "@/lib/api-response";
 import { z } from "zod";
@@ -37,7 +38,7 @@ export async function POST(request: Request) {
     if (!Array.isArray(rows) || rows.length === 0) return badRequest("No customer rows provided.");
     if (rows.length > 500) return badRequest("Maximum 500 customers per import.");
 
-    const valid: object[] = [];
+    const valid: Prisma.CustomerCreateManyInput[] = [];
     const errors: { row: number; message: string }[] = [];
 
     for (let i = 0; i < rows.length; i++) {
@@ -56,7 +57,7 @@ export async function POST(request: Request) {
     let imported = 0;
     if (valid.length > 0) {
       const result = await prisma.customer.createMany({
-        data: valid as Parameters<typeof prisma.customer.createMany>[0]["data"],
+        data: valid,
         skipDuplicates: true,
       });
       imported = result.count;
