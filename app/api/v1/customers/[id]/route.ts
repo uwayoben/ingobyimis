@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getAuthUser } from "@/lib/auth";
-import { ok, notFound, unauthorized, serverError } from "@/lib/api-response";
+import { ok, notFound, unauthorized, forbidden, badRequest, serverError } from "@/lib/api-response";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -69,6 +69,36 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     });
 
     return ok(updated);
+  } catch (e) {
+    console.error(e);
+    return serverError();
+  }
+}
+
+export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const auth = getAuthUser(request);
+    if (!auth) return unauthorized();
+    if (auth.role !== "super_admin") return forbidden("Only super admins can delete customers.");
+
+    const { id } = await params;
+
+    const customer = await prisma.customer.findUnique({
+      where: { id },
+      include: { _count: { select: { loans: true } } },
+    });
+
+    if (!customer) return notFound("Customer not found.");
+
+    if (customer._count.loans > 0) {
+      return badRequest(
+        `Cannot delete — this customer has ${customer._count.loans} loan record(s). Remove all associated loans first.`
+      );
+    }
+
+    await prisma.customer.delete({ where: { id } });
+
+    return ok({ message: "Customer deleted successfully." });
   } catch (e) {
     console.error(e);
     return serverError();

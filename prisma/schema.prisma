@@ -240,6 +240,9 @@ model Loan {
   previousProvision       Int              @default(0)
   additionalProvision     Int              @default(0)
 
+  // Top-up tracking
+  topUpAmount             Int              @default(0)
+
   // Status flags
   status                  LoanStatus       @default(pending)
   isRestructured          Boolean          @default(false)

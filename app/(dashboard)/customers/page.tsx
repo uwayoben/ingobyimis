@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Search, Filter, User, Users, TrendingUp, CreditCard, UserCheck, Loader2, Upload } from "lucide-react";
+import { Plus, Search, Filter, User, Users, TrendingUp, CreditCard, UserCheck, Loader2, Upload, Trash2, AlertTriangle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -22,6 +22,11 @@ const FILTER_OPTIONS = [
   { label: "No Loans", value: "none" },
 ];
 
+function getStoredRole(): string {
+  if (typeof window === "undefined") return "";
+  try { return JSON.parse(localStorage.getItem("user") || "{}").role ?? ""; } catch { return ""; }
+}
+
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -29,6 +34,12 @@ export default function CustomersPage() {
   const [filter, setFilter] = useState("all");
   const [showModal, setShowModal] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Customer | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+
+  useEffect(() => { setIsSuperAdmin(getStoredRole() === "super_admin"); }, []);
 
   const fetchCustomers = useCallback(async () => {
     setLoading(true);
@@ -54,6 +65,23 @@ export default function CustomersPage() {
     if (filter === "none") return (c.activeLoans ?? 0) === 0;
     return true;
   });
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      const res = await apiFetch(`/api/v1/customers/${deleteTarget.id}`, { method: "DELETE" });
+      const json = await res.json();
+      if (!res.ok) { setDeleteError(json.error ?? "Delete failed."); return; }
+      setDeleteTarget(null);
+      fetchCustomers();
+    } catch {
+      setDeleteError("Network error. Please try again.");
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const activeCount = customers.filter((c) => (c.activeLoans ?? 0) > 0).length;
   const totalOutstanding = customers.reduce((s, c) => s + (c.outstandingBalance ?? 0), 0);
@@ -185,16 +213,24 @@ export default function CustomersPage() {
                 <tr className="border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/30">
                   <th className="text-left text-xs font-semibold text-gray-500 dark:text-gray-400 px-6 py-3 uppercase tracking-wider">Customer</th>
                   <th className="text-left text-xs font-semibold text-gray-500 dark:text-gray-400 px-4 py-3 uppercase tracking-wider hidden md:table-cell">National ID</th>
+                  {isSuperAdmin && <th className="text-left text-xs font-semibold text-gray-500 dark:text-gray-400 px-4 py-3 uppercase tracking-wider hidden lg:table-cell">Company</th>}
                   <th className="text-left text-xs font-semibold text-gray-500 dark:text-gray-400 px-4 py-3 uppercase tracking-wider hidden lg:table-cell">Location</th>
                   <th className="text-left text-xs font-semibold text-gray-500 dark:text-gray-400 px-4 py-3 uppercase tracking-wider hidden sm:table-cell">Loans</th>
                   <th className="text-right text-xs font-semibold text-gray-500 dark:text-gray-400 px-4 py-3 uppercase tracking-wider">Outstanding</th>
                   <th className="text-left text-xs font-semibold text-gray-500 dark:text-gray-400 px-4 py-3 uppercase tracking-wider hidden lg:table-cell">Status</th>
+                  {isSuperAdmin && <th className="px-4 py-3 uppercase tracking-wider" />}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
                 <AnimatePresence>
                   {filtered.map((customer, i) => (
-                    <CustomerRow key={customer.id} customer={customer} index={i} />
+                    <CustomerRow
+                      key={customer.id}
+                      customer={customer}
+                      index={i}
+                      isSuperAdmin={isSuperAdmin}
+                      onDelete={() => { setDeleteError(""); setDeleteTarget(customer); }}
+                    />
                   ))}
                 </AnimatePresence>
               </tbody>
@@ -216,11 +252,53 @@ export default function CustomersPage() {
           onImported={() => { fetchCustomers(); }}
         />
       </Modal>
+
+      {/* Delete confirmation */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-2xl p-7 max-w-sm w-full mx-4">
+            <div className="flex items-center justify-center w-14 h-14 rounded-full bg-red-100 dark:bg-red-900/30 mx-auto mb-4">
+              <AlertTriangle className="w-7 h-7 text-red-600 dark:text-red-400" />
+            </div>
+            <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100 text-center mb-1">Delete Customer?</h2>
+            <p className="text-sm text-gray-500 dark:text-gray-400 text-center mb-2">
+              You are about to permanently delete <span className="font-semibold text-gray-800 dark:text-gray-200">{deleteTarget.names}</span>. This cannot be undone.
+            </p>
+            {deleteError && (
+              <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/40 rounded-lg px-3 py-2 mb-3 text-center">
+                {deleteError}
+              </p>
+            )}
+            <div className="flex gap-3 mt-4">
+              <button
+                onClick={() => { setDeleteTarget(null); setDeleteError(""); }}
+                disabled={deleting}
+                className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 dark:border-gray-700 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white text-sm font-semibold transition-colors"
+              >
+                {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                {deleting ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function CustomerRow({ customer, index }: { customer: Customer; index: number }) {
+function CustomerRow({ customer, index, isSuperAdmin, onDelete }: {
+  customer: Customer;
+  index: number;
+  isSuperAdmin: boolean;
+  onDelete: () => void;
+}) {
   const initials = customer.names.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
   const gradients = [
     "from-green-500 to-emerald-600",
@@ -252,6 +330,11 @@ function CustomerRow({ customer, index }: { customer: Customer; index: number })
       <td className="px-4 py-3.5 hidden md:table-cell">
         <span className="text-xs font-mono bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 px-2 py-0.5 rounded-md">{customer.nationalId}</span>
       </td>
+      {isSuperAdmin && (
+        <td className="px-4 py-3.5 hidden lg:table-cell">
+          <span className="text-xs text-gray-700 dark:text-gray-300">{customer.companyName ?? "—"}</span>
+        </td>
+      )}
       <td className="px-4 py-3.5 hidden lg:table-cell">
         <p className="text-xs text-gray-700 dark:text-gray-300">{customer.district}</p>
         <p className="text-[11px] text-gray-400">{customer.province}</p>
@@ -275,6 +358,17 @@ function CustomerRow({ customer, index }: { customer: Customer; index: number })
           {customer.isActive ? "Active" : "Inactive"}
         </Badge>
       </td>
+      {isSuperAdmin && (
+        <td className="px-4 py-3.5 text-right">
+          <button
+            onClick={(e) => { e.preventDefault(); onDelete(); }}
+            className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors opacity-0 group-hover:opacity-100"
+            title="Delete customer"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </td>
+      )}
     </motion.tr>
   );
 }

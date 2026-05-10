@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import {
   ArrowLeft, CheckCircle2, XCircle, Printer, ArrowDownToLine, Loader2,
   AlertTriangle, Banknote, TrendingDown, CreditCard, ArrowDownUp, FileText, ExternalLink,
-  MinusCircle,
+  MinusCircle, TrendingUp,
 } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
@@ -311,6 +311,218 @@ function WaiverForm({
   );
 }
 
+// ── Top Up Form ───────────────────────────────────────────────────────────────
+function TopUpForm({
+  loan,
+  onClose,
+  onSaved,
+}: {
+  loan: Loan;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const defaultDate = tomorrow.toISOString().slice(0, 10);
+
+  const [topUpAmount,    setTopUpAmount]    = useState("");
+  const [newInstallments, setNewInstallments] = useState(
+    String(loan.totalInstallments - loan.installmentsPaid || loan.totalInstallments)
+  );
+  const [firstPaymentDate, setFirstPaymentDate] = useState(defaultDate);
+  const [newRate,           setNewRate]          = useState(String(loan.annualInterestRate));
+  const [loading,           setLoading]          = useState(false);
+  const [error,             setError]            = useState("");
+
+  const outstanding   = loan.balanceOutstanding;
+  const topUp         = Math.max(0, Number(topUpAmount) || 0);
+  const newPrincipal  = outstanding + topUp;
+  const n             = Math.max(1, Number(newInstallments) || 1);
+  const rate          = Math.max(0.01, Number(newRate) || loan.annualInterestRate);
+  const periodsPerYear = 365 / loan.repaymentFrequencyDays;
+  const periodRate    = rate / 100 / periodsPerYear;
+
+  // Live calculation
+  let newInstallmentAmt = 0;
+  let newTotalRepayable = 0;
+  if (newPrincipal > 0) {
+    if (loan.interestMethod === "flat") {
+      const totalInterest  = newPrincipal * periodRate * n;
+      newTotalRepayable    = Math.round(newPrincipal + totalInterest);
+      newInstallmentAmt    = Math.round(newTotalRepayable / n);
+    } else {
+      newInstallmentAmt    = periodRate === 0
+        ? Math.round(newPrincipal / n)
+        : Math.round((newPrincipal * periodRate) / (1 - Math.pow(1 + periodRate, -n)));
+      newTotalRepayable    = newInstallmentAmt * n;
+    }
+  }
+
+  const newMaturityDate = (() => {
+    if (!firstPaymentDate) return "—";
+    const d = new Date(firstPaymentDate);
+    d.setDate(d.getDate() + (n - 1) * loan.repaymentFrequencyDays);
+    return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+  })();
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    if (!topUp || topUp <= 0) { setError("Top-up amount must be greater than zero."); return; }
+    if (!firstPaymentDate)    { setError("First payment date is required."); return; }
+    setLoading(true);
+    try {
+      const res = await apiFetch(`/api/v1/loans/${loan.id}/topup`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topUpAmount:           topUp,
+          newTotalInstallments:  n,
+          newFirstPaymentDate:   firstPaymentDate,
+          newAnnualInterestRate: rate !== loan.annualInterestRate ? rate : undefined,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) { setError(json.error || "Top-up failed."); return; }
+      onSaved();
+    } catch {
+      setError("Network error.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="p-6 space-y-5">
+      {error && (
+        <p className="text-xs text-red-600 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">{error}</p>
+      )}
+
+      {/* Current state summary */}
+      <div className="bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-xl p-4 space-y-2 text-xs">
+        <p className="font-semibold text-gray-700 dark:text-gray-300 mb-1">Current Loan State</p>
+        <div className="flex justify-between">
+          <span className="text-gray-500">Outstanding Principal</span>
+          <span className="font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(outstanding)}</span>
+        </div>
+        {loan.penaltyAmount > 0 && (
+          <div className="flex justify-between">
+            <span className="text-red-500">Accrued Penalty (will be cleared)</span>
+            <span className="font-semibold text-red-600 dark:text-red-400">{formatCurrency(loan.penaltyAmount)}</span>
+          </div>
+        )}
+        <div className="flex justify-between">
+          <span className="text-gray-500">Installments Paid</span>
+          <span className="font-semibold text-gray-900 dark:text-gray-100">{loan.installmentsPaid} of {loan.totalInstallments}</span>
+        </div>
+      </div>
+
+      {/* Top-up amount */}
+      <Input
+        label="Top-Up Amount (RWF)"
+        type="number"
+        min="1"
+        placeholder="e.g. 5000000"
+        value={topUpAmount}
+        onChange={(e) => setTopUpAmount(e.target.value)}
+        required
+      />
+
+      {/* New principal preview */}
+      {topUp > 0 && (
+        <div className="bg-green-50 dark:bg-green-900/10 border border-green-200 dark:border-green-800/50 rounded-xl p-3 text-xs space-y-1.5">
+          <p className="font-semibold text-gray-700 dark:text-gray-300">New Principal Breakdown</p>
+          <div className="flex justify-between">
+            <span className="text-gray-500">Outstanding Balance</span>
+            <span className="font-medium text-gray-800 dark:text-gray-200">{formatCurrency(outstanding)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">+ Top-Up Amount</span>
+            <span className="font-medium text-green-600 dark:text-green-400">{formatCurrency(topUp)}</span>
+          </div>
+          <div className="border-t border-green-200 dark:border-green-800/50 pt-1.5 flex justify-between">
+            <span className="font-bold text-gray-700 dark:text-gray-300">= New Principal</span>
+            <span className="font-bold text-green-700 dark:text-green-400">{formatCurrency(newPrincipal)}</span>
+          </div>
+        </div>
+      )}
+
+      {/* New schedule inputs */}
+      <div className="grid grid-cols-2 gap-4">
+        <Input
+          label="New Installments Count"
+          type="number"
+          min="1"
+          value={newInstallments}
+          onChange={(e) => setNewInstallments(e.target.value)}
+          required
+        />
+        <Input
+          label="First Payment Date"
+          type="date"
+          value={firstPaymentDate}
+          onChange={(e) => setFirstPaymentDate(e.target.value)}
+          required
+        />
+      </div>
+
+      <Input
+        label={`Annual Interest Rate (%) — current: ${loan.annualInterestRate}%`}
+        type="number"
+        min="0.01"
+        step="0.001"
+        value={newRate}
+        onChange={(e) => setNewRate(e.target.value)}
+        required
+      />
+
+      {/* New schedule preview */}
+      {topUp > 0 && newInstallmentAmt > 0 && (
+        <div className="bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800/50 rounded-xl p-4 space-y-2 text-xs">
+          <p className="font-semibold text-gray-700 dark:text-gray-300 mb-1">New Repayment Schedule Preview</p>
+          <div className="flex justify-between">
+            <span className="text-gray-500">New Principal</span>
+            <span className="font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(newPrincipal)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">Interest Method</span>
+            <span className="font-semibold text-gray-900 dark:text-gray-100 capitalize">{loan.interestMethod}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">Total Interest</span>
+            <span className="font-semibold text-amber-600 dark:text-amber-400">{formatCurrency(newTotalRepayable - newPrincipal)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">Total Repayable</span>
+            <span className="font-semibold text-blue-700 dark:text-blue-400">{formatCurrency(newTotalRepayable)}</span>
+          </div>
+          <div className="border-t border-blue-200 dark:border-blue-800/50 pt-1.5 flex justify-between">
+            <span className="font-bold text-gray-700 dark:text-gray-300">
+              {loan.repaymentFrequencyDays === 30 ? "Monthly" : loan.repaymentFrequencyDays === 7 ? "Weekly" : `Every ${loan.repaymentFrequencyDays}d`} Installment
+            </span>
+            <span className="font-bold text-lg text-green-700 dark:text-green-400">{formatCurrency(newInstallmentAmt)}</span>
+          </div>
+          <div className="flex justify-between text-gray-500">
+            <span>New Maturity Date</span>
+            <span className="font-medium text-gray-700 dark:text-gray-300">{newMaturityDate}</span>
+          </div>
+        </div>
+      )}
+
+      <div className="flex justify-end gap-3 pt-1">
+        <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+        <Button
+          type="submit"
+          loading={loading}
+          icon={<TrendingUp className="w-4 h-4" />}
+        >
+          Confirm Top-Up
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 // ── Main Page ──────────────────────────────────────────────────────────────────
 export default function LoanDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -330,8 +542,9 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
   const [actionModal, setActionModal]   = useState<"approve" | "reject" | "disburse" | null>(null);
   const [actioning, setActioning]       = useState(false);
   const [actionError, setActionError]   = useState("");
-  const [showPayModal,   setShowPayModal]   = useState(false);
-  const [showWaiveModal, setShowWaiveModal] = useState(false);
+  const [showPayModal,    setShowPayModal]   = useState(false);
+  const [showWaiveModal,  setShowWaiveModal] = useState(false);
+  const [showTopUpModal,  setShowTopUpModal] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -412,6 +625,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
   const canPayment    = ["active", "overdue", "disbursed"].includes(loan.status) ||
     (loan.status === "completed" && trueOutstanding(loan) > 0);
   const canWaive      = canApprove && ["active", "overdue", "completed"].includes(loan.status) && loan.penaltyAmount > 0;
+  const canTopUp      = canDisburse && ["active", "overdue"].includes(loan.status) && loan.balanceOutstanding > 0;
 
   return (
     <div className="space-y-6">
@@ -430,12 +644,25 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
               {loan.loanClass}
             </span>
             {loan.isRestructured && <Badge variant="info" className="text-[10px]">Restructured</Badge>}
+            {loan.topUpAmount > 0 && (
+              <Badge variant="success" className="text-[10px]">Topped Up +{formatCurrency(loan.topUpAmount)}</Badge>
+            )}
           </div>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
             {loan.purpose} · {loan.customer?.names ?? loan.customerName} · Created {formatDate(loan.createdAt)}
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
+          {canTopUp && (
+            <Button
+              variant="outline"
+              size="sm"
+              icon={<TrendingUp className="w-4 h-4" />}
+              onClick={() => setShowTopUpModal(true)}
+            >
+              Top Up
+            </Button>
+          )}
           {canWaive && (
             <Button
               variant="outline"
@@ -1014,6 +1241,15 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
           loan={loan}
           onClose={() => setShowWaiveModal(false)}
           onSaved={() => { setShowWaiveModal(false); fetchData(); }}
+        />
+      </Modal>
+
+      {/* ── Top-Up Modal ──────────────────────────────────────────────── */}
+      <Modal isOpen={showTopUpModal} onClose={() => setShowTopUpModal(false)} title="Loan Top-Up" size="md">
+        <TopUpForm
+          loan={loan}
+          onClose={() => setShowTopUpModal(false)}
+          onSaved={() => { setShowTopUpModal(false); fetchData(); }}
         />
       </Modal>
 

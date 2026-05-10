@@ -144,6 +144,8 @@ function mockLoan(o: {
     previousProvision: 0,
     additionalProvision: 0,
     isRestructured: false,
+    topUpAmount: 0,
+    penaltyRatePerDay: 0,
     updatedAt: o.createdAt,
   };
 }

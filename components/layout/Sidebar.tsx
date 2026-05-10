@@ -28,7 +28,7 @@ const ALL_NAV_ITEMS = [
   {
     group: "Operations",
     items: [
-      { href: "/customers",       label: "Customers",       icon: Users,          roles: ["managing_director", "loan_officer", "receptionist"] },
+      { href: "/customers",       label: "Customers",       icon: Users,          roles: ["super_admin", "managing_director", "loan_officer", "receptionist"] },
       { href: "/loans",           label: "Loans",           icon: FileText,       roles: ["managing_director", "loan_officer", "receptionist"] },
       { href: "/loan-calculator", label: "Loan Calculator", icon: Calculator,     roles: ["managing_director", "loan_officer"] },
       { href: "/payments",        label: "Payments",        icon: CreditCard,     roles: ["managing_director", "loan_officer"] },

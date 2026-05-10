@@ -30,14 +30,18 @@ export async function GET(request: Request) {
     const auth = getAuthUser(request);
     if (!auth) return unauthorized();
 
+    const isSuperAdmin = auth.role === "super_admin";
+    if (!isSuperAdmin && !auth.companyId) return unauthorized();
+
     const { searchParams } = new URL(request.url);
     const page = Math.max(1, Number(searchParams.get("page") ?? 1));
-    const limit = Math.min(100, Math.max(1, Number(searchParams.get("limit") ?? 20)));
+    const limit = Math.min(200, Math.max(1, Number(searchParams.get("limit") ?? 20)));
     const search = searchParams.get("search") ?? "";
     const skip = (page - 1) * limit;
 
     const where = {
-      companyId: auth.companyId!,
+      // super_admin sees all companies; others are scoped to their company
+      ...(!isSuperAdmin && { companyId: auth.companyId! }),
       ...(search && {
         OR: [
           { names: { contains: search } },
@@ -61,6 +65,7 @@ export async function GET(request: Request) {
             where: { status: { in: ["active", "overdue"] } },
             select: { balanceOutstanding: true, status: true },
           },
+          company: { select: { name: true } },
         },
       }),
       prisma.customer.count({ where }),
@@ -85,6 +90,7 @@ export async function GET(request: Request) {
       relationshipWithNdfsp: c.relationshipWithNdfsp,
       isActive: c.isActive,
       companyId: c.companyId,
+      companyName: c.company.name,
       createdAt: c.createdAt,
       totalLoans: c._count.loans,
       activeLoans: c.loans.filter((l) => l.status === "active" || l.status === "overdue").length,

@@ -60,6 +60,7 @@ export interface Customer {
   spouseIdNumber?: string;
   maritalPropertyRegime?: string;
   companyId: string;
+  companyName?: string;
   createdAt: string;
   // computed by API
   totalLoans?: number;
@@ -143,6 +144,7 @@ export interface Loan {
   additionalProvision: number;
   status: LoanStatus;
   isRestructured: boolean;
+  topUpAmount: number;
   cutoffDate?: string;
   writtenOffDate?: string;
   createdAt: string;
