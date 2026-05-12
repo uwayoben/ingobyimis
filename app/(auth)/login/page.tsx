@@ -85,7 +85,7 @@ export default function LoginPage() {
         >
           <div className="inline-flex items-center gap-2 bg-green-500/15 border border-green-500/20 rounded-full px-3 py-1.5 mb-6">
             <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-            <span className="text-xs text-green-300 font-medium">Trusted by NDFs Manager</span>
+            <span className="text-xs text-green-300 font-medium">Trusted by NDFs</span>
           </div>
 
           <h1 className="text-4xl font-bold text-white leading-[1.15] mb-4">
