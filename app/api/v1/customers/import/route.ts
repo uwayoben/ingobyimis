@@ -38,7 +38,7 @@ export async function POST(request: Request) {
     if (!Array.isArray(rows) || rows.length === 0) return badRequest("No customer rows provided.");
     if (rows.length > 500) return badRequest("Maximum 500 customers per import.");
 
-    const valid: Prisma.CustomerCreateManyInput[] = [];
+    const valid: any[] = [];
     const errors: { row: number; message: string }[] = [];
 
     for (let i = 0; i < rows.length; i++) {
