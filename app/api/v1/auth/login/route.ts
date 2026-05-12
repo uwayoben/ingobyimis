@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { badRequest, unauthorized, serverError } from "@/lib/api-response";
+import { sendSms } from "@/lib/sms";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 
@@ -104,6 +105,10 @@ export async function POST(request: Request) {
     });
 
     console.log(`[OTP] User ${user.email}: ${otpCode}`);
+
+    if (user.phone) {
+      await sendSms(user.phone, `Your ipfundoMIS verification code is: ${otpCode}. Valid for 10 minutes. Do not share this code.`);
+    }
 
     return Response.json({
       data: {
