@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import {
   ArrowLeft, CheckCircle2, XCircle, Printer, ArrowDownToLine, Loader2,
   AlertTriangle, Banknote, TrendingDown, CreditCard, ArrowDownUp, FileText, ExternalLink,
-  MinusCircle, TrendingUp,
+  MinusCircle, TrendingUp, Upload, X, Receipt,
 } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
@@ -24,7 +24,7 @@ function formatCurrency(n: number) {
 }
 
 function loanPeriodRate(loan: Loan): number {
-  return loan.annualInterestRate / 100 / (365 / loan.repaymentFrequencyDays);
+  return loan.annualInterestRate / 100 / (360 / loan.repaymentFrequencyDays);
 }
 
 function interestRemaining(loan: Loan): number {
@@ -83,12 +83,14 @@ function RecordPaymentForm({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [amount, setAmount]       = useState("");
-  const [method, setMethod]       = useState("cash");
-  const [reference, setReference] = useState("");
-  const [notes, setNotes]         = useState("");
-  const [loading, setLoading]     = useState(false);
-  const [error, setError]         = useState("");
+  const [amount, setAmount]           = useState("");
+  const [method, setMethod]           = useState("cash");
+  const [reference, setReference]     = useState("");
+  const [notes, setNotes]             = useState("");
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [uploading, setUploading]     = useState(false);
+  const [loading, setLoading]         = useState(false);
+  const [error, setError]             = useState("");
 
   const penalty      = loan.penaltyAmount;
   const totalOuts    = trueOutstanding(loan);
@@ -96,7 +98,7 @@ function RecordPaymentForm({
   const penaltyPaid  = Math.min(amt, penalty);
   const afterPenalty = amt - penaltyPaid;
   // Interest allocation preview: per-period for declining, capped at remaining scheduled interest
-  const periodsPerYear    = 365 / loan.repaymentFrequencyDays;
+  const periodsPerYear    = 360 / loan.repaymentFrequencyDays;
   const periodRate        = Number(loan.annualInterestRate) / 100 / periodsPerYear;
   const remainingInt      = Math.max(0, (loan.totalRepayable - loan.amount) - loan.amountRepaidInterest);
   const periodInterest    = loan.balanceOutstanding > 0
@@ -114,12 +116,34 @@ function RecordPaymentForm({
     if (!amount || !reference) { setError("Amount and reference are required."); return; }
     const parsed = Number(amount);
     if (!parsed || parsed <= 0) { setError("Enter a valid amount."); return; }
+
+    let receiptUrl: string | undefined;
+
+    if (receiptFile) {
+      setUploading(true);
+      try {
+        const fd = new FormData();
+        fd.append("file", receiptFile);
+        fd.append("folder", "receipts");
+        const upRes  = await apiFetch("/api/v1/uploads", { method: "POST", body: fd });
+        const upJson = await upRes.json();
+        if (!upRes.ok) { setError(upJson.error || "Receipt upload failed."); setUploading(false); return; }
+        receiptUrl = upJson.data?.url;
+      } catch {
+        setError("Receipt upload failed. Please try again.");
+        setUploading(false);
+        return;
+      } finally {
+        setUploading(false);
+      }
+    }
+
     setLoading(true);
     try {
       const res = await apiFetch("/api/v1/payments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ loanId: loan.id, amount: parsed, method, reference, notes: notes || undefined }),
+        body: JSON.stringify({ loanId: loan.id, amount: parsed, method, reference, notes: notes || undefined, receiptUrl }),
       });
       const json = await res.json();
       if (!res.ok) { setError(json.error || "Failed to record payment."); return; }
@@ -235,9 +259,44 @@ function RecordPaymentForm({
         onChange={(e) => setNotes(e.target.value)}
       />
 
+      {/* Receipt upload */}
+      <div>
+        <p className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-1.5">Receipt (optional)</p>
+        {receiptFile ? (
+          <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-green-200 dark:border-green-800/50 bg-green-50 dark:bg-green-900/10">
+            <Receipt className="w-4 h-4 text-green-600 dark:text-green-400 shrink-0" />
+            <span className="text-xs font-medium text-green-700 dark:text-green-300 flex-1 truncate">{receiptFile.name}</span>
+            <button
+              type="button"
+              onClick={() => setReceiptFile(null)}
+              className="text-gray-400 hover:text-red-500 transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        ) : (
+          <label className="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-dashed border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/40 cursor-pointer hover:border-green-400 dark:hover:border-green-600 hover:bg-green-50 dark:hover:bg-green-900/10 transition-all">
+            <Upload className="w-4 h-4 text-gray-400 shrink-0" />
+            <span className="text-xs text-gray-500 dark:text-gray-400">Click to upload receipt (JPG, PNG, PDF — max 5 MB)</span>
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp,application/pdf"
+              className="hidden"
+              onChange={(e) => setReceiptFile(e.target.files?.[0] ?? null)}
+            />
+          </label>
+        )}
+      </div>
+
       <div className="flex justify-end gap-3">
         <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-        <Button type="submit" loading={loading} icon={<Banknote className="w-4 h-4" />}>Record Payment</Button>
+        <Button
+          type="submit"
+          loading={uploading || loading}
+          icon={<Banknote className="w-4 h-4" />}
+        >
+          {uploading ? "Uploading receipt…" : "Record Payment"}
+        </Button>
       </div>
     </form>
   );
@@ -253,20 +312,26 @@ function WaiverForm({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [reason, setReason]   = useState("");
+  const [reason,  setReason]  = useState("");
+  const [amount,  setAmount]  = useState(String(loan.penaltyAmount));
   const [loading, setLoading] = useState(false);
-  const [error, setError]     = useState("");
+  const [error,   setError]   = useState("");
+
+  const waivedAmt   = Math.min(Math.max(0, Number(amount) || 0), loan.penaltyAmount);
+  const remaining   = loan.penaltyAmount - waivedAmt;
+  const isFullWaive = waivedAmt === loan.penaltyAmount;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     if (!reason.trim()) { setError("A reason is required."); return; }
+    if (!waivedAmt || waivedAmt <= 0) { setError("Enter a valid waiver amount."); return; }
     setLoading(true);
     try {
       const res  = await apiFetch(`/api/v1/loans/${loan.id}/waive`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reason }),
+        body: JSON.stringify({ reason, amount: waivedAmt }),
       });
       const json = await res.json();
       if (!res.ok) { setError(json.error || "Waiver failed."); return; }
@@ -285,13 +350,49 @@ function WaiverForm({
       )}
 
       <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4 space-y-1 text-xs">
-        <p className="font-semibold text-red-700 dark:text-red-300 mb-1">Penalty to Waive</p>
+        <p className="font-semibold text-red-700 dark:text-red-300 mb-1">Outstanding Penalty</p>
         <div className="flex justify-between items-center">
-          <span className="text-red-600 dark:text-red-400">Outstanding Penalty</span>
+          <span className="text-red-600 dark:text-red-400">Total Penalty Balance</span>
           <span className="text-lg font-bold text-red-600 dark:text-red-400">{formatCurrency(loan.penaltyAmount)}</span>
         </div>
-        <p className="text-red-500 dark:text-red-500 mt-1">The full penalty amount will be written off.</p>
+        {loan.penaltyWaived > 0 && (
+          <div className="flex justify-between items-center mt-1">
+            <span className="text-gray-500 dark:text-gray-400">Previously Waived</span>
+            <span className="font-medium text-gray-600 dark:text-gray-400">{formatCurrency(loan.penaltyWaived)}</span>
+          </div>
+        )}
       </div>
+
+      <Input
+        label={`Amount to Waive (RWF) — max ${formatCurrency(loan.penaltyAmount)}`}
+        type="number"
+        min="1"
+        max={loan.penaltyAmount}
+        value={amount}
+        onChange={(e) => setAmount(e.target.value)}
+        required
+      />
+
+      {waivedAmt > 0 && (
+        <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/50 rounded-xl p-3 text-xs space-y-1.5">
+          <div className="flex justify-between">
+            <span className="text-gray-500">Amount to Write Off</span>
+            <span className="font-bold text-red-600 dark:text-red-400">{formatCurrency(waivedAmt)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">Penalty Remaining After Waiver</span>
+            <span className={cn("font-semibold", remaining > 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400")}>
+              {remaining > 0 ? formatCurrency(remaining) : "None"}
+            </span>
+          </div>
+          {!isFullWaive && (
+            <p className="text-amber-700 dark:text-amber-400 pt-0.5">Partial waiver — {formatCurrency(remaining)} will still be owed.</p>
+          )}
+          {isFullWaive && (
+            <p className="text-emerald-700 dark:text-emerald-400 pt-0.5">Full waiver — penalty will be completely cleared.</p>
+          )}
+        </div>
+      )}
 
       <Textarea
         label="Reason (required)"
@@ -304,7 +405,7 @@ function WaiverForm({
       <div className="flex justify-end gap-3">
         <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
         <Button type="submit" loading={loading} variant="danger" icon={<MinusCircle className="w-4 h-4" />}>
-          Waive Penalty
+          {isFullWaive ? "Waive Full Penalty" : "Waive Partial Penalty"}
         </Button>
       </div>
     </form>
@@ -325,36 +426,47 @@ function TopUpForm({
   tomorrow.setDate(tomorrow.getDate() + 1);
   const defaultDate = tomorrow.toISOString().slice(0, 10);
 
-  const [topUpAmount,    setTopUpAmount]    = useState("");
+  const [topUpType,       setTopUpType]       = useState<"addon" | "refinance">("addon");
+  const [topUpAmount,     setTopUpAmount]     = useState("");
   const [newInstallments, setNewInstallments] = useState(
     String(loan.totalInstallments - loan.installmentsPaid || loan.totalInstallments)
   );
   const [firstPaymentDate, setFirstPaymentDate] = useState(defaultDate);
-  const [newRate,           setNewRate]          = useState(String(loan.annualInterestRate));
+  const [newRate,           setNewRate]          = useState(String(loan.annualInterestRate / 12));
   const [loading,           setLoading]          = useState(false);
   const [error,             setError]            = useState("");
 
-  const outstanding   = loan.balanceOutstanding;
-  const topUp         = Math.max(0, Number(topUpAmount) || 0);
-  const newPrincipal  = outstanding + topUp;
-  const n             = Math.max(1, Number(newInstallments) || 1);
-  const rate          = Math.max(0.01, Number(newRate) || loan.annualInterestRate);
-  const periodsPerYear = 365 / loan.repaymentFrequencyDays;
-  const periodRate    = rate / 100 / periodsPerYear;
+  const outstanding = loan.balanceOutstanding;
+  const topUp       = Math.max(0, Number(topUpAmount) || 0);
+  const n           = Math.max(1, Number(newInstallments) || 1);
+  // rate is the monthly interest rate entered by the user
+  const rate        = Math.max(0.01, Number(newRate) || (loan.annualInterestRate / 12));
+  // convert monthly rate to period rate using 30-day month convention
+  const periodRate  = (rate / 100) * (loan.repaymentFrequencyDays / 30);
 
-  // Live calculation
+  // New principal depends on type
+  const newPrincipal = topUpType === "addon"
+    ? outstanding + topUp               // add-on: stack on top of outstanding
+    : topUp;                            // refinance: top-up IS the new loan
+
+  const cashToClient = topUpType === "addon"
+    ? topUp                             // client receives the extra amount
+    : Math.max(0, topUp - outstanding); // client receives surplus after clearing old balance
+
+  // Live repayment calculation on newPrincipal (same formula as a normal loan)
   let newInstallmentAmt = 0;
   let newTotalRepayable = 0;
   if (newPrincipal > 0) {
     if (loan.interestMethod === "flat") {
-      const totalInterest  = newPrincipal * periodRate * n;
-      newTotalRepayable    = Math.round(newPrincipal + totalInterest);
-      newInstallmentAmt    = Math.round(newTotalRepayable / n);
+      const totalInterest = newPrincipal * periodRate * n;
+      newTotalRepayable   = Math.round(newPrincipal + totalInterest);
+      newInstallmentAmt   = Math.round(newTotalRepayable / n);
     } else {
-      newInstallmentAmt    = periodRate === 0
-        ? Math.round(newPrincipal / n)
-        : Math.round((newPrincipal * periodRate) / (1 - Math.pow(1 + periodRate, -n)));
-      newTotalRepayable    = newInstallmentAmt * n;
+      const exactEmi    = periodRate === 0
+        ? newPrincipal / n
+        : (newPrincipal * periodRate) / (1 - Math.pow(1 + periodRate, -n));
+      newInstallmentAmt = Math.round(exactEmi);
+      newTotalRepayable = Math.round(exactEmi * n);
     }
   }
 
@@ -369,17 +481,22 @@ function TopUpForm({
     e.preventDefault();
     setError("");
     if (!topUp || topUp <= 0) { setError("Top-up amount must be greater than zero."); return; }
-    if (!firstPaymentDate)    { setError("First payment date is required."); return; }
+    if (topUpType === "refinance" && topUp < outstanding) {
+      setError(`Refinance amount must be at least the outstanding balance (${formatCurrency(outstanding)}).`);
+      return;
+    }
+    if (!firstPaymentDate) { setError("First payment date is required."); return; }
     setLoading(true);
     try {
       const res = await apiFetch(`/api/v1/loans/${loan.id}/topup`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          topUpType,
           topUpAmount:           topUp,
           newTotalInstallments:  n,
           newFirstPaymentDate:   firstPaymentDate,
-          newAnnualInterestRate: rate !== loan.annualInterestRate ? rate : undefined,
+          newAnnualInterestRate: Number(newRate) * 12,
         }),
       });
       const json = await res.json();
@@ -392,11 +509,51 @@ function TopUpForm({
     }
   };
 
+  const freqLabel = loan.repaymentFrequencyDays === 30 ? "Monthly"
+    : loan.repaymentFrequencyDays === 7 ? "Weekly"
+    : `Every ${loan.repaymentFrequencyDays}d`;
+
   return (
     <form onSubmit={handleSubmit} className="p-6 space-y-5">
       {error && (
         <p className="text-xs text-red-600 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">{error}</p>
       )}
+
+      {/* Type selector */}
+      <div>
+        <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">Top-Up Type</p>
+        <div className="grid grid-cols-2 gap-3">
+          {([
+            {
+              value: "addon",
+              label: "Add-on",
+              desc: "Top-up amount is added to the existing outstanding balance. Client receives the extra cash.",
+            },
+            {
+              value: "refinance",
+              label: "Refinance",
+              desc: "Top-up amount replaces the entire outstanding balance. Client receives the surplus as cash.",
+            },
+          ] as const).map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => { setTopUpType(opt.value); setError(""); }}
+              className={cn(
+                "text-left rounded-xl border p-3 transition-all",
+                topUpType === opt.value
+                  ? "border-green-500 bg-green-50 dark:bg-green-900/20 ring-1 ring-green-500"
+                  : "border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600"
+              )}
+            >
+              <p className={cn("text-xs font-bold mb-0.5", topUpType === opt.value ? "text-green-700 dark:text-green-400" : "text-gray-800 dark:text-gray-200")}>
+                {opt.label}
+              </p>
+              <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-snug">{opt.desc}</p>
+            </button>
+          ))}
+        </div>
+      </div>
 
       {/* Current state summary */}
       <div className="bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-xl p-4 space-y-2 text-xs">
@@ -419,7 +576,7 @@ function TopUpForm({
 
       {/* Top-up amount */}
       <Input
-        label="Top-Up Amount (RWF)"
+        label={topUpType === "addon" ? "Amount to Add (RWF)" : "New Loan Amount / Refinance Amount (RWF)"}
         type="number"
         min="1"
         placeholder="e.g. 5000000"
@@ -428,22 +585,50 @@ function TopUpForm({
         required
       />
 
-      {/* New principal preview */}
+      {/* Principal breakdown preview */}
       {topUp > 0 && (
         <div className="bg-green-50 dark:bg-green-900/10 border border-green-200 dark:border-green-800/50 rounded-xl p-3 text-xs space-y-1.5">
-          <p className="font-semibold text-gray-700 dark:text-gray-300">New Principal Breakdown</p>
-          <div className="flex justify-between">
-            <span className="text-gray-500">Outstanding Balance</span>
-            <span className="font-medium text-gray-800 dark:text-gray-200">{formatCurrency(outstanding)}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-500">+ Top-Up Amount</span>
-            <span className="font-medium text-green-600 dark:text-green-400">{formatCurrency(topUp)}</span>
-          </div>
-          <div className="border-t border-green-200 dark:border-green-800/50 pt-1.5 flex justify-between">
-            <span className="font-bold text-gray-700 dark:text-gray-300">= New Principal</span>
-            <span className="font-bold text-green-700 dark:text-green-400">{formatCurrency(newPrincipal)}</span>
-          </div>
+          <p className="font-semibold text-gray-700 dark:text-gray-300">
+            {topUpType === "addon" ? "New Principal Breakdown" : "Refinance Breakdown"}
+          </p>
+          {topUpType === "addon" ? (
+            <>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Outstanding Balance</span>
+                <span className="font-medium text-gray-800 dark:text-gray-200">{formatCurrency(outstanding)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">+ Top-Up Amount (cash to client)</span>
+                <span className="font-medium text-green-600 dark:text-green-400">{formatCurrency(topUp)}</span>
+              </div>
+              <div className="border-t border-green-200 dark:border-green-800/50 pt-1.5 flex justify-between">
+                <span className="font-bold text-gray-700 dark:text-gray-300">= New Principal</span>
+                <span className="font-bold text-green-700 dark:text-green-400">{formatCurrency(newPrincipal)}</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex justify-between">
+                <span className="text-gray-500">New Loan Amount</span>
+                <span className="font-medium text-green-700 dark:text-green-400">{formatCurrency(topUp)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">— Covers Outstanding Balance</span>
+                <span className="font-medium text-red-600 dark:text-red-400">− {formatCurrency(outstanding)}</span>
+              </div>
+              <div className="border-t border-green-200 dark:border-green-800/50 pt-1.5 flex justify-between">
+                <span className="font-bold text-gray-700 dark:text-gray-300">= Cash to Client</span>
+                <span className={cn("font-bold", cashToClient > 0 ? "text-green-700 dark:text-green-400" : "text-gray-400")}>
+                  {cashToClient > 0 ? formatCurrency(cashToClient) : "—"}
+                </span>
+              </div>
+              {topUp < outstanding && (
+                <p className="text-red-600 dark:text-red-400 pt-1">
+                  ⚠ Amount must be at least {formatCurrency(outstanding)} to cover the outstanding balance.
+                </p>
+              )}
+            </>
+          )}
         </div>
       )}
 
@@ -467,16 +652,16 @@ function TopUpForm({
       </div>
 
       <Input
-        label={`Annual Interest Rate (%) — current: ${loan.annualInterestRate}%`}
+        label={`Monthly Interest Rate (%) — current: ${loan.annualInterestRate / 12}%`}
         type="number"
         min="0.01"
-        step="0.001"
+        step="0.1"
         value={newRate}
         onChange={(e) => setNewRate(e.target.value)}
         required
       />
 
-      {/* New schedule preview */}
+      {/* Schedule preview */}
       {topUp > 0 && newInstallmentAmt > 0 && (
         <div className="bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800/50 rounded-xl p-4 space-y-2 text-xs">
           <p className="font-semibold text-gray-700 dark:text-gray-300 mb-1">New Repayment Schedule Preview</p>
@@ -497,9 +682,7 @@ function TopUpForm({
             <span className="font-semibold text-blue-700 dark:text-blue-400">{formatCurrency(newTotalRepayable)}</span>
           </div>
           <div className="border-t border-blue-200 dark:border-blue-800/50 pt-1.5 flex justify-between">
-            <span className="font-bold text-gray-700 dark:text-gray-300">
-              {loan.repaymentFrequencyDays === 30 ? "Monthly" : loan.repaymentFrequencyDays === 7 ? "Weekly" : `Every ${loan.repaymentFrequencyDays}d`} Installment
-            </span>
+            <span className="font-bold text-gray-700 dark:text-gray-300">{freqLabel} Installment</span>
             <span className="font-bold text-lg text-green-700 dark:text-green-400">{formatCurrency(newInstallmentAmt)}</span>
           </div>
           <div className="flex justify-between text-gray-500">
@@ -516,7 +699,7 @@ function TopUpForm({
           loading={loading}
           icon={<TrendingUp className="w-4 h-4" />}
         >
-          Confirm Top-Up
+          Confirm {topUpType === "addon" ? "Add-on" : "Refinance"} Top-Up
         </Button>
       </div>
     </form>
@@ -542,9 +725,10 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
   const [actionModal, setActionModal]   = useState<"approve" | "reject" | "disburse" | null>(null);
   const [actioning, setActioning]       = useState(false);
   const [actionError, setActionError]   = useState("");
-  const [showPayModal,    setShowPayModal]   = useState(false);
-  const [showWaiveModal,  setShowWaiveModal] = useState(false);
-  const [showTopUpModal,  setShowTopUpModal] = useState(false);
+  const [showPayModal,      setShowPayModal]      = useState(false);
+  const [showWaiveModal,    setShowWaiveModal]    = useState(false);
+  const [showTopUpModal,    setShowTopUpModal]    = useState(false);
+  const [showContractModal, setShowContractModal] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -620,7 +804,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
   const progressPct    = loan.totalInstallments > 0 ? (loan.installmentsPaid / loan.totalInstallments) * 100 : 0;
   const totalOuts      = trueOutstanding(loan);
   const intRemaining   = interestRemaining(loan);
-  const totalPaid      = loan.amountRepaidPrincipal + loan.amountRepaidInterest;
+  const totalPaid      = loan.amountRepaidPrincipal + loan.amountRepaidInterest + (loan.penaltyPaid ?? 0);
   const companyName   = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}").companyName ?? "NDF" : "NDF";
   const canPayment    = ["active", "overdue", "disbursed"].includes(loan.status) ||
     (loan.status === "completed" && trueOutstanding(loan) > 0);
@@ -691,7 +875,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
           {loan.status === "approved" && canDisburse && (
             <Button size="sm" icon={<ArrowDownToLine className="w-4 h-4" />} onClick={() => setActionModal("disburse")}>Disburse</Button>
           )}
-          <Button variant="outline" size="sm" icon={<FileText className="w-4 h-4" />} onClick={() => window.open(`/api/v1/loans/${id}/agreement`, "_blank")}>Loan Agreement</Button>
+          <Button variant="outline" size="sm" icon={<FileText className="w-4 h-4" />} onClick={() => setShowContractModal(true)}>Loan Agreement</Button>
         </div>
       </div>
 
@@ -764,6 +948,15 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                   {formatCurrency(loan.penaltyAmount)}
                 </span>
               </div>
+              {loan.penaltyWaived > 0 && (
+                <div className="flex justify-between text-[11px] bg-amber-50 dark:bg-amber-900/10 rounded px-2 py-1 -mx-1">
+                  <span className="text-amber-600 dark:text-amber-400">
+                    Penalty Waived{loan.penaltyWaivedByName ? ` by ${loan.penaltyWaivedByName}` : ""}
+                    {loan.penaltyWaivedAt ? ` · ${formatDate(loan.penaltyWaivedAt)}` : ""}
+                  </span>
+                  <span className="font-semibold text-amber-600 dark:text-amber-400">{formatCurrency(loan.penaltyWaived)}</span>
+                </div>
+              )}
               {loan.nextPaymentDate && (
                 <div className="flex justify-between">
                   <span className="text-gray-500">Next Due</span>
@@ -819,7 +1012,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                     { label: "Customer",       value: loan.customer?.names ?? loan.customerName },
                     { label: "Loan Officer",   value: loan.loanOfficer?.name ?? "—" },
                     { label: "Purpose",        value: loan.purpose },
-                    { label: "Interest Rate",  value: `${loan.annualInterestRate}% p.a. (${loan.interestMethod})` },
+                    { label: "Interest Rate",  value: `${loan.annualInterestRate / 12}%/month (${loan.interestMethod})` },
                     { label: "Repayment",      value: `${loan.repaymentFrequencyDays === 30 ? "Monthly" : loan.repaymentFrequencyDays === 7 ? "Weekly" : loan.repaymentFrequencyDays === 14 ? "Bi-weekly" : `Every ${loan.repaymentFrequencyDays}d`} · ${loan.totalInstallments} installments` },
                     { label: "First Payment",  value: loan.firstPaymentDate ? formatDate(loan.firstPaymentDate) : "—" },
                     { label: "Maturity Date",  value: formatDate(loan.agreedMaturityDate) },
@@ -1055,7 +1248,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50">
-                      {["Reference", "Date", "Total", "Principal", "Interest", "Penalty", "Method", "Recorded By"].map((h) => (
+                      {["Reference", "Date", "Total", "Principal", "Interest", "Penalty", "Method", "Recorded By", "Receipt"].map((h) => (
                         <th key={h} className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 px-4 py-3 first:pl-6">{h}</th>
                       ))}
                     </tr>
@@ -1087,6 +1280,20 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                             <Badge variant={m.variant} className="text-[10px]">{m.label}</Badge>
                           </td>
                           <td className="px-4 py-3 text-gray-400">{p.recordedByName ?? "—"}</td>
+                          <td className="px-4 py-3">
+                            {p.receiptUrl ? (
+                              <a
+                                href={p.receiptUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-xs font-semibold text-green-600 dark:text-green-400 hover:underline"
+                              >
+                                <Receipt className="w-3.5 h-3.5" /> View
+                              </a>
+                            ) : (
+                              <span className="text-gray-300 dark:text-gray-600 text-xs">—</span>
+                            )}
+                          </td>
                         </motion.tr>
                       );
                     })}
@@ -1098,7 +1305,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                       <td className="px-4 py-3 text-green-600 dark:text-green-400">{formatCurrency(payments.reduce((s,p)=>s+p.principal,0))}</td>
                       <td className="px-4 py-3 text-amber-600 dark:text-amber-400">{formatCurrency(payments.reduce((s,p)=>s+p.interest,0))}</td>
                       <td className="px-4 py-3 text-red-600 dark:text-red-400">{formatCurrency(payments.reduce((s,p)=>s+p.penalty,0))}</td>
-                      <td colSpan={2} />
+                      <td colSpan={3} />
                     </tr>
                   </tfoot>
                 </table>
@@ -1179,10 +1386,10 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                     <p className="text-xs text-green-700 dark:text-green-400 mt-0.5">Print-ready BNR-compliant agreement with all borrower and loan details filled in.</p>
                   </div>
                   <button
-                    onClick={() => window.open(`/api/v1/loans/${id}/agreement`, "_blank")}
+                    onClick={() => setShowContractModal(true)}
                     className="flex items-center gap-2 bg-green-700 hover:bg-green-800 text-white text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors whitespace-nowrap"
                   >
-                    <ExternalLink className="w-4 h-4" /> Open &amp; Print
+                    <Printer className="w-4 h-4" /> Open &amp; Print
                   </button>
                 </div>
 
@@ -1199,7 +1406,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                 <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 space-y-1">
                   <h4 className="font-semibold text-gray-900 dark:text-gray-100 mb-2">Loan Terms</h4>
                   <p>Principal Amount: <strong>{formatCurrency(loan.amount)}</strong></p>
-                  <p>Annual Interest Rate: <strong>{loan.annualInterestRate}% ({loan.interestMethod} balance)</strong></p>
+                  <p>Monthly Interest Rate: <strong>{loan.annualInterestRate / 12}%/month ({loan.interestMethod} balance)</strong></p>
                   <p>Repayment Period: <strong>{loan.totalInstallments} installments</strong></p>
                   <p>Installment Amount: <strong>{formatCurrency(loan.nextPaymentAmount)}</strong></p>
                   <p>Total Repayable: <strong>{formatCurrency(loan.totalRepayable)}</strong></p>
@@ -1286,6 +1493,26 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
           </div>
         </div>
       </Modal>
+
+      {/* ── Contract Fullscreen Modal ──────────────────────────────────── */}
+      {showContractModal && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-black/60 backdrop-blur-sm">
+          <div className="flex items-center justify-between bg-green-900 px-5 py-3 flex-shrink-0">
+            <span className="text-white font-semibold text-sm">Loan Agreement — {loan.id}</span>
+            <button
+              onClick={() => setShowContractModal(false)}
+              className="text-white/80 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <iframe
+            src={`/api/v1/loans/${id}/agreement`}
+            className="flex-1 w-full bg-white"
+            title="Loan Agreement"
+          />
+        </div>
+      )}
     </div>
   );
 }

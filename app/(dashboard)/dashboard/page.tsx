@@ -66,6 +66,18 @@ interface PendingLoan {
   createdAt: string;
 }
 
+interface OverdueLoan {
+  id: string;
+  customerName: string;
+  amount: number;
+  balanceOutstanding: number;
+  penaltyAmount: number;
+  daysOverdue: number;
+  loanClass: string;
+  nextPaymentDate: string | null;
+  nextPaymentAmount: number;
+}
+
 const FILTERS = [
   { value: "all", label: "All Time" },
   { value: "today", label: "Today" },
@@ -97,6 +109,7 @@ export default function DashboardPage() {
   const { role } = useRole();
   const [kpi, setKpi] = useState<KPIData | null>(null);
   const [pendingLoans, setPendingLoans] = useState<PendingLoan[]>([]);
+  const [overdueList, setOverdueList] = useState<OverdueLoan[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");
 
@@ -115,9 +128,11 @@ export default function DashboardPage() {
     Promise.all([
       apiFetch(`/api/v1/dashboard?filter=${activeFilter}`).then((r) => r.json()),
       apiFetch("/api/v1/loans?status=pending&limit=5").then((r) => r.json()),
-    ]).then(([dashData, loansData]) => {
+      apiFetch("/api/v1/loans?status=overdue&limit=50").then((r) => r.json()),
+    ]).then(([dashData, loansData, overdueData]) => {
       if (dashData.data) setKpi(dashData.data);
       if (loansData.data) setPendingLoans(loansData.data);
+      if (overdueData.data) setOverdueList(overdueData.data);
     }).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
@@ -548,27 +563,119 @@ export default function DashboardPage() {
           </motion.div>
         )}
 
-        {role === "managing_director" && kd.overdueLoans > 0 && (
-          <motion.div
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.35 }}
-            className="bg-red-50 dark:bg-red-900/10 rounded-2xl border border-red-200 dark:border-red-800/50 overflow-hidden"
-          >
-            <div className="px-5 py-4 border-b border-red-100 dark:border-red-800/50 flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-red-500" />
-              <h3 className="text-sm font-bold text-red-800 dark:text-red-400">Overdue Accounts</h3>
-              <Badge variant="danger" className="ml-auto">{kd.overdueLoans}</Badge>
-            </div>
-            <div className="p-5 text-sm text-red-700 dark:text-red-400">
-              <p>{kd.overdueLoans} loan{kd.overdueLoans > 1 ? "s" : ""} require immediate follow-up.</p>
-              <Link href="/loans?status=overdue" className="inline-flex items-center gap-1 mt-2 text-xs font-semibold underline underline-offset-2">
-                Review overdue loans →
-              </Link>
-            </div>
-          </motion.div>
-        )}
       </div>
+
+      {/* ── Overdue Loans Table ───────────────────────────────────────── */}
+      {(role === "managing_director" || role === "loan_officer") && (
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.4 }}
+          className="bg-white dark:bg-gray-900 rounded-2xl border border-red-200 dark:border-red-800/50 shadow-sm overflow-hidden"
+        >
+          <div className="px-5 py-4 border-b border-red-100 dark:border-red-800/50 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
+            <div>
+              <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">Overdue Loans</h3>
+              <p className="text-xs text-gray-500 mt-0.5">Loans requiring immediate follow-up</p>
+            </div>
+            <Badge variant="danger" className="ml-auto">{overdueList.length}</Badge>
+            <Link href="/loans?status=overdue" className="text-xs font-semibold text-red-600 dark:text-red-400 hover:underline whitespace-nowrap">
+              View all →
+            </Link>
+          </div>
+
+          {overdueList.length === 0 ? (
+            <div className="py-12 text-center">
+              <div className="w-12 h-12 rounded-full bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center mx-auto mb-3">
+                <AlertTriangle className="w-5 h-5 text-emerald-500" />
+              </div>
+              <p className="text-sm font-medium text-gray-900 dark:text-gray-100">No overdue loans</p>
+              <p className="text-xs text-gray-400 mt-1">All loans are up to date</p>
+            </div>
+          ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-gray-100 dark:border-gray-800 bg-red-50/50 dark:bg-red-900/5">
+                  {["Customer", "Loan ID", "Days Overdue", "Outstanding Balance", "Penalty", "Loan Class", "Next Due"].map((h) => (
+                    <th key={h} className="text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-4 py-3 first:pl-6 last:pr-6">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
+                {overdueList.map((loan, i) => (
+                  <motion.tr
+                    key={loan.id}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: i * 0.03 }}
+                    className="hover:bg-red-50/30 dark:hover:bg-red-900/5 transition-colors"
+                  >
+                    <td className="pl-6 pr-4 py-3">
+                      <Link href={`/loans/${loan.id}`} className="flex items-center gap-3 group">
+                        <div className="w-8 h-8 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center text-red-700 dark:text-red-400 text-xs font-bold shrink-0">
+                          {loan.customerName[0]}
+                        </div>
+                        <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 group-hover:text-red-600 dark:group-hover:text-red-400 transition-colors">
+                          {loan.customerName}
+                        </p>
+                      </Link>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="text-xs font-mono font-semibold text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded-md">
+                        {loan.id.slice(0, 12).toUpperCase()}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-lg ${
+                        loan.daysOverdue > 90  ? "bg-red-200 text-red-800 dark:bg-red-900/50 dark:text-red-300" :
+                        loan.daysOverdue > 30  ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" :
+                                                 "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                      }`}>
+                        <AlertTriangle className="w-3 h-3" />
+                        {loan.daysOverdue}d
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="text-sm font-bold text-gray-900 dark:text-gray-100">{formatCurrency(loan.balanceOutstanding)}</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {loan.penaltyAmount > 0 ? (
+                        <span className="text-sm font-semibold text-red-600 dark:text-red-400">{formatCurrency(loan.penaltyAmount)}</span>
+                      ) : (
+                        <span className="text-gray-300 dark:text-gray-600 text-xs">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs font-semibold px-2 py-1 rounded-lg ${
+                        loan.loanClass === "Normal"      ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
+                        loan.loanClass === "Watch"       ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400" :
+                        loan.loanClass === "Substandard" ? "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400" :
+                        loan.loanClass === "Doubtful"    ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" :
+                                                           "bg-gray-800 text-gray-100 dark:bg-gray-700"
+                      }`}>
+                        {loan.loanClass}
+                      </span>
+                    </td>
+                    <td className="px-4 pr-6 py-3 text-xs text-gray-500 dark:text-gray-400">
+                      {loan.nextPaymentDate ? (
+                        <div>
+                          <p className="font-medium text-gray-700 dark:text-gray-300">{formatDate(loan.nextPaymentDate)}</p>
+                          <p className="text-gray-400">{formatCurrency(loan.nextPaymentAmount)}</p>
+                        </div>
+                      ) : "—"}
+                    </td>
+                  </motion.tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          )}
+        </motion.div>
+      )}
     </div>
   );
 }

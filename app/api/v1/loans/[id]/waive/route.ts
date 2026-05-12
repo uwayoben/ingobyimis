@@ -6,6 +6,7 @@ import { z } from "zod";
 
 const waiveSchema = z.object({
   reason: z.string().min(1, "A reason is required for all waivers"),
+  amount: z.number().positive("Waiver amount must be positive").optional(),
 });
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -20,7 +21,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const parsed = waiveSchema.safeParse(body);
     if (!parsed.success) return badRequest(parsed.error.issues[0].message);
 
-    const { reason } = parsed.data;
+    const { reason, amount } = parsed.data;
 
     const loan = await prisma.loan.findFirst({
       where: { id, companyId: auth.companyId! },
@@ -33,8 +34,20 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (loan.penaltyAmount === 0)
       return badRequest("There is no outstanding penalty to waive.");
 
-    const waived    = loan.penaltyAmount;
-    const newPenalty = 0;
+    const waived = amount !== undefined
+      ? Math.min(amount, loan.penaltyAmount)
+      : loan.penaltyAmount;
+
+    if (waived <= 0) return badRequest("Waiver amount must be greater than zero.");
+
+    const newPenalty = loan.penaltyAmount - waived;
+
+    // Fetch the waivor's name
+    const waivor = await prisma.user.findUnique({
+      where: { id: auth.userId },
+      select: { name: true },
+    });
+    const waivorName = waivor?.name ?? auth.name ?? "Unknown";
 
     const { loanClass, provisioningRate } = classifyLoan(loan.daysOverdue);
     const provisionRequired = Math.round(loan.balanceOutstanding * Number(provisioningRate) / 100);
@@ -47,7 +60,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           amount:        waived,
           balanceBefore: loan.balanceOutstanding,
           balanceAfter:  loan.balanceOutstanding,
-          description:   `Penalty waiver — ${reason}`,
+          description:   `Penalty waiver (${formatCurrency(waived)}) by ${waivorName} — ${reason}`,
           referenceId:   id,
           createdById:   auth.userId,
         },
@@ -56,7 +69,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       return tx.loan.update({
         where: { id },
         data: {
-          penaltyAmount:    newPenalty,
+          penaltyAmount:      newPenalty,
+          penaltyWaived:      { increment: waived },
+          penaltyWaivedByName: waivorName,
+          penaltyWaivedAt:    new Date(),
           loanClass,
           provisioningRate,
           provisionRequired,
@@ -73,4 +89,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     console.error(e);
     return serverError();
   }
+}
+
+function formatCurrency(n: number) {
+  return "RWF " + Math.round(n).toLocaleString();
 }

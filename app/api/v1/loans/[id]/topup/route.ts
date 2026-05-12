@@ -5,6 +5,7 @@ import { generateSchedule, classifyLoan } from "@/lib/loan-schedule";
 import { z } from "zod";
 
 const topUpSchema = z.object({
+  topUpType:             z.enum(["addon", "refinance"]),
   topUpAmount:           z.number().int().positive(),
   newTotalInstallments:  z.number().int().positive(),
   newFirstPaymentDate:   z.string().min(1),
@@ -36,15 +37,32 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       return badRequest("This loan has no outstanding balance to top up.");
     }
 
-    const effectiveRate     = d.newAnnualInterestRate ?? Number(loan.annualInterestRate);
+    const effectiveRate        = d.newAnnualInterestRate ?? Number(loan.annualInterestRate);
     const outstandingPrincipal = loan.balanceOutstanding;
-    const newPrincipal      = outstandingPrincipal + d.topUpAmount;
-    const newFirstPaymentDate = new Date(d.newFirstPaymentDate);
-    const n                 = d.newTotalInstallments;
-    const periodsPerYear    = 365 / loan.repaymentFrequencyDays;
-    const periodRate        = effectiveRate / 100 / periodsPerYear;
+    const newFirstPaymentDate  = new Date(d.newFirstPaymentDate);
+    const n                    = d.newTotalInstallments;
+    const periodsPerYear       = 360 / loan.repaymentFrequencyDays;
+    const periodRate           = effectiveRate / 100 / periodsPerYear;
 
-    // Recalculate repayment figures for the combined new principal
+    // ── Determine new principal and actual cash disbursed based on top-up type ──
+    // addon:    new principal = outstanding + top-up; client receives top-up in cash.
+    // refinance: new principal = top-up amount (replaces the entire outstanding);
+    //            client receives (top-up − outstanding) as net new cash.
+    const newPrincipal = d.topUpType === "addon"
+      ? outstandingPrincipal + d.topUpAmount
+      : d.topUpAmount;
+
+    const cashDisbursed = d.topUpType === "addon"
+      ? d.topUpAmount
+      : Math.max(0, d.topUpAmount - outstandingPrincipal);
+
+    if (d.topUpType === "refinance" && d.topUpAmount < outstandingPrincipal) {
+      return badRequest(
+        `Refinance amount (RWF ${d.topUpAmount.toLocaleString()}) must be at least the outstanding balance (RWF ${outstandingPrincipal.toLocaleString()}).`
+      );
+    }
+
+    // Recalculate repayment figures on newPrincipal (same formula as a fresh loan)
     let newTotalRepayable: number;
     let newInstallmentAmount: number;
     if (loan.interestMethod === "flat") {
@@ -52,10 +70,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       newTotalRepayable     = Math.round(newPrincipal + totalInterest);
       newInstallmentAmount  = Math.round(newTotalRepayable / n);
     } else {
-      newInstallmentAmount  = periodRate === 0
-        ? Math.round(newPrincipal / n)
-        : Math.round((newPrincipal * periodRate) / (1 - Math.pow(1 + periodRate, -n)));
-      newTotalRepayable     = newInstallmentAmount * n;
+      const exactEmi        = periodRate === 0
+        ? newPrincipal / n
+        : (newPrincipal * periodRate) / (1 - Math.pow(1 + periodRate, -n));
+      newInstallmentAmount  = Math.round(exactEmi);
+      newTotalRepayable     = Math.round(exactEmi * n);
     }
 
     const newMaturityDate = new Date(newFirstPaymentDate);
@@ -91,37 +110,47 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         })),
       });
 
-      // Deduct top-up disbursement from company account
+      // Deduct actual cash disbursed from company account.
+      // addon:    full top-up amount leaves the account.
+      // refinance: only the net new cash (top-up − outstanding) leaves; the rest
+      //            is an internal settlement of the old balance.
       const company = await tx.company.findUnique({
         where: { id: auth.companyId! },
         select: { accountBalance: true },
       });
       const balanceBefore = company?.accountBalance ?? 0;
-      const balanceAfter  = balanceBefore - d.topUpAmount;
+      const balanceAfter  = balanceBefore - cashDisbursed;
 
-      await tx.company.update({
-        where: { id: auth.companyId! },
-        data:  { accountBalance: balanceAfter },
-      });
+      if (cashDisbursed > 0) {
+        await tx.company.update({
+          where: { id: auth.companyId! },
+          data:  { accountBalance: balanceAfter },
+        });
 
-      await tx.ledgerEntry.create({
-        data: {
-          companyId:     auth.companyId!,
-          type:          "disbursement",
-          amount:        d.topUpAmount,
-          balanceBefore,
-          balanceAfter,
-          description:   `Loan top-up — ${id.slice(0, 8).toUpperCase()} (+RWF ${d.topUpAmount.toLocaleString()})`,
-          referenceId:   id,
-          createdById:   auth.userId,
-        },
-      });
+        await tx.ledgerEntry.create({
+          data: {
+            companyId:     auth.companyId!,
+            type:          "disbursement",
+            amount:        cashDisbursed,
+            balanceBefore,
+            balanceAfter,
+            description:   d.topUpType === "addon"
+              ? `Loan add-on top-up — ${id.slice(0, 8).toUpperCase()} (+RWF ${d.topUpAmount.toLocaleString()})`
+              : `Loan refinance — ${id.slice(0, 8).toUpperCase()} (net cash RWF ${cashDisbursed.toLocaleString()})`,
+            referenceId:   id,
+            createdById:   auth.userId,
+          },
+        });
+      }
 
+      const typeLabel = d.topUpType === "addon" ? "Add-on top-up" : "Refinance top-up";
       await tx.notification.create({
         data: {
           type:      "disbursement",
-          title:     "Loan Top-Up Processed",
-          message:   `Loan ${id.slice(0, 8).toUpperCase()} topped up by RWF ${d.topUpAmount.toLocaleString()}. New principal: RWF ${newPrincipal.toLocaleString()}.`,
+          title:     `Loan ${typeLabel} Processed`,
+          message:   d.topUpType === "addon"
+            ? `Loan ${id.slice(0, 8).toUpperCase()} add-on: +RWF ${d.topUpAmount.toLocaleString()}. New principal: RWF ${newPrincipal.toLocaleString()}.`
+            : `Loan ${id.slice(0, 8).toUpperCase()} refinanced. New principal: RWF ${newPrincipal.toLocaleString()}. Net cash to client: RWF ${cashDisbursed.toLocaleString()}.`,
           companyId: auth.companyId!,
           link:      `/loans/${id}`,
         },

@@ -15,7 +15,7 @@ export function generateSchedule(
   firstPaymentDate: Date,
   repaymentFrequencyDays: number,
 ): InstallmentRow[] {
-  const periodsPerYear = 365 / repaymentFrequencyDays;
+  const periodsPerYear = 360 / repaymentFrequencyDays;
   const periodRate = annualInterestRate / 100 / periodsPerYear;
 
   const rows: InstallmentRow[] = [];

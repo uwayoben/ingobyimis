@@ -13,6 +13,9 @@ const HEADERS = [
   "repayment_frequency_days",
   "total_installments",
   "first_payment_date",
+  "status",
+  "days_overdue",
+  "disbursement_date",
   "branch_name",
   "collateral_type",
   "collateral_amount",
@@ -20,32 +23,14 @@ const HEADERS = [
 
 const REQUIRED_HEADERS = [
   "customer_national_id",
-  "purpose",
   "amount",
-  "annual_interest_rate",
-  "interest_method",
-  "repayment_frequency_days",
-  "total_installments",
-  "first_payment_date",
 ];
 
 const SAMPLE_ROWS = [
-  ["1199780012345678", "Business Capital",  "500000", "24", "declining", "30", "12", "2025-06-01", "Kigali Branch", "property",  "2000000"],
-  ["1198560098765432", "School Fees Loan",  "200000", "18", "flat",      "30",  "6", "2025-06-15", "",              "",          ""],
+  ["1199780012345678", "Business Capital", "500000", "24", "declining", "30", "12", "2025-06-01", "active",  "",   "2025-05-01", "Kigali Branch", "property", "2000000"],
+  ["1198560098765432", "School Fees Loan", "200000", "18", "flat",      "30",  "6", "2024-12-01", "overdue", "45", "2024-11-01", "",              "",          ""],
+  ["1197450076543210", "Working Capital",  "300000", "20", "declining", "30", "12", "2026-07-01", "pending", "",   "",           "",              "",          ""],
 ];
-
-function downloadTemplate() {
-  const lines = [
-    HEADERS.join(","),
-    ...SAMPLE_ROWS.map((r) => r.join(",")),
-  ];
-  const url = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
-  const a   = document.createElement("a");
-  a.href     = url;
-  a.download = "loans_import_template.csv";
-  a.click();
-  URL.revokeObjectURL(url);
-}
 
 function parseCSV(text: string): string[][] {
   return text.trim().split(/\r?\n/).map((line) => {
@@ -62,40 +47,146 @@ function parseCSV(text: string): string[][] {
   });
 }
 
+function downloadTemplate() {
+  const lines = [
+    HEADERS.join(","),
+    ...SAMPLE_ROWS.map((r) => r.join(",")),
+  ];
+  const url = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
+  const a   = document.createElement("a");
+  a.href     = url;
+  a.download = "loans_import_template.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Convert an Excel serial date number or DD/MM/YYYY string to YYYY-MM-DD. */
+function toISODate(val: unknown): string {
+  if (val instanceof Date) return val.toISOString().split("T")[0];
+  if (typeof val === "number" && val > 1000) {
+    // Excel serial: offset from Dec 30 1899
+    const d = new Date(Math.round((val - 25569) * 86400 * 1000));
+    return d.toISOString().split("T")[0];
+  }
+  const s = String(val ?? "").trim();
+  const ddmm = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (ddmm) return `${ddmm[3]}-${ddmm[2].padStart(2, "0")}-${ddmm[1].padStart(2, "0")}`;
+  return s;
+}
+
+/** Columns from report-style xlsx files → our API field names */
+const LOAN_COLUMN_MAP: Record<string, string> = {
+  "national id":                    "customer_national_id",
+  "national_id":                    "customer_national_id",
+  "client id":                      "customer_national_id",
+  "customer id":                    "customer_national_id",
+  "id number":                      "customer_national_id",
+  "loan status":                    "status",
+  "status":                         "status",
+  "disbursement date":              "disbursement_date",
+  "date disbursed":                 "disbursement_date",
+  "principal amount (rwf)":         "amount",
+  "principal amount":               "amount",
+  "loan amount":                    "amount",
+  "amount":                         "amount",
+  "remaining balance (rwf)":        "balance_outstanding",
+  "remaining balance":              "balance_outstanding",
+  "outstanding balance":            "balance_outstanding",
+  "interest rate (%)":              "annual_interest_rate",
+  "interest rate":                  "annual_interest_rate",
+  "annual rate":                    "annual_interest_rate",
+  "rate (%)":                       "annual_interest_rate",
+  "interest type":                  "interest_method",
+  "interest method":                "interest_method",
+  "method":                         "interest_method",
+  "days overdue":                   "days_overdue",
+  "overdue days":                   "days_overdue",
+  "dpd":                            "days_overdue",
+  "collateral type":                "collateral_type",
+  "collateral":                     "collateral_type",
+  "collateral value (rwf)":         "collateral_amount",
+  "collateral value":               "collateral_amount",
+  "collateral amount":              "collateral_amount",
+  "penalty rate (%)":               "penalty_rate",
+  "repayment frequency":            "repayment_frequency_days",
+  "frequency":                      "repayment_frequency_days",
+  "total installments":             "total_installments",
+  "installments":                   "total_installments",
+  "number of installments":         "total_installments",
+  "term":                           "total_installments",
+  "first payment date":             "first_payment_date",
+  "purpose":                        "purpose",
+  "loan purpose":                   "purpose",
+  "branch":                         "branch_name",
+  "branch name":                    "branch_name",
+};
+
+/** Fields whose values need date conversion (Excel serial or DD/MM/YYYY → YYYY-MM-DD) */
+const DATE_FIELDS = new Set(["disbursement_date", "first_payment_date"]);
+
+/** Status values from reports → our API status */
+const STATUS_MAP: Record<string, string> = {
+  "active":    "active",
+  "overdue":   "overdue",
+  "pending":   "pending",
+  "completed": "completed",
+  "disbursed": "active",
+  "written off": "written_off",
+  "written_off": "written_off",
+  "rejected":  "rejected",
+};
+
+async function parseXLSX(file: File): Promise<{ headers: string[]; matrix: string[][] }> {
+  const { read, utils } = await import("xlsx");
+  const buf = await file.arrayBuffer();
+  const wb = read(buf);
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const raw: unknown[][] = utils.sheet_to_json(ws, { header: 1, defval: "" });
+
+  // Auto-detect the real header row: the row with the most non-empty cells in the first 15 rows
+  let headerRowIdx = 0;
+  let maxNonEmpty = 0;
+  for (let i = 0; i < Math.min(raw.length, 15); i++) {
+    const count = (raw[i] as unknown[]).filter((c) => String(c ?? "").trim() !== "").length;
+    if (count > maxNonEmpty) { maxNonEmpty = count; headerRowIdx = i; }
+  }
+
+  const rawHeaders = raw[headerRowIdx] as unknown[];
+  const headers = rawHeaders.map((h) => String(h ?? "").trim());
+
+  // Map raw values; apply date conversion for known date fields
+  const matrix = (raw.slice(headerRowIdx + 1) as unknown[][]).map((row) =>
+    headers.map((h, i) => {
+      const rawKey = h.toLowerCase().trim();
+      const apiKey = LOAN_COLUMN_MAP[rawKey];
+      const v = row[i];
+      if (DATE_FIELDS.has(apiKey ?? "") && v !== "" && v !== undefined) return toISODate(v);
+      if (apiKey === "status") {
+        const mapped = STATUS_MAP[(String(v ?? "")).toLowerCase().trim()];
+        return mapped ?? String(v ?? "").trim().toLowerCase();
+      }
+      if (apiKey === "interest_method") return (String(v ?? "")).toLowerCase().trim();
+      return v === null || v === undefined ? "" : String(v);
+    })
+  );
+
+  return { headers, matrix };
+}
+
 type ParsedRow = Record<string, string>;
 
+const VALID_STATUSES = ["pending", "active", "overdue"];
+
 function validateRow(row: ParsedRow): string | null {
-  if (!row.customer_national_id?.trim()) return "customer_national_id is required";
-  if (!row.purpose?.trim())              return "purpose is required";
+  if (!row.customer_national_id?.trim()) return "National ID is required";
 
   const amount = Number(row.amount);
-  if (!row.amount || isNaN(amount) || amount <= 0 || !Number.isInteger(amount))
-    return "amount must be a positive whole number (e.g. 500000)";
+  if (!row.amount || isNaN(amount) || amount <= 0)
+    return "amount must be a positive number";
 
   const rate = Number(row.annual_interest_rate);
-  if (!row.annual_interest_rate || isNaN(rate) || rate <= 0 || rate > 200)
-    return "annual_interest_rate must be a number between 0.1 and 200 (e.g. 24)";
-
-  if (!["flat", "declining"].includes(row.interest_method?.toLowerCase?.()))
-    return "interest_method must be 'flat' or 'declining'";
-
-  const freq = Number(row.repayment_frequency_days);
-  if (!row.repayment_frequency_days || isNaN(freq) || freq <= 0 || !Number.isInteger(freq))
-    return "repayment_frequency_days must be a positive integer (e.g. 30 for monthly)";
-
-  const insts = Number(row.total_installments);
-  if (!row.total_installments || isNaN(insts) || insts <= 0 || !Number.isInteger(insts))
-    return "total_installments must be a positive integer";
-
-  if (!row.first_payment_date?.trim()) return "first_payment_date is required";
-  if (isNaN(new Date(row.first_payment_date).getTime()))
-    return "first_payment_date must be a valid date in YYYY-MM-DD format";
-
-  if (row.collateral_amount && row.collateral_amount.trim()) {
-    const ca = Number(row.collateral_amount);
-    if (isNaN(ca) || ca <= 0 || !Number.isInteger(ca))
-      return "collateral_amount must be a positive integer if provided";
-  }
+  if (!row.annual_interest_rate || isNaN(rate) || rate < 0 || rate > 200)
+    return "interest rate must be between 0 and 200";
 
   return null;
 }
@@ -117,40 +208,65 @@ export function ImportLoansModal({ onClose, onImported }: { onClose: () => void;
   const [dragging, setDragging] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const processMatrix = useCallback((fileHeaders: string[], matrix: string[][]) => {
+    // Resolve each file header to an API key via alias map or direct normalisation
+    const resolvedHeaders = fileHeaders.map((h) => {
+      const lower = h.toLowerCase().trim();
+      return LOAN_COLUMN_MAP[lower]
+        ?? HEADERS.find((k) => k === lower)
+        ?? lower.replace(/[\s\-/(%)]+/g, "_").replace(/[^a-z0-9_]/g, "").replace(/_+/g, "_").replace(/^_|_$/g, "");
+    });
+
+    const missing = REQUIRED_HEADERS.filter((h) => !resolvedHeaders.includes(h));
+    if (missing.length > 0) {
+      const found = resolvedHeaders.filter(Boolean).join(", ") || "(none)";
+      setParseError(`Missing required columns: ${missing.join(", ")}.\nFound in file: ${found}.\nMake sure you are using the correct template.`);
+      return;
+    }
+
+    const parsed: ParsedRow[] = matrix
+      .map((cols) => {
+        const obj: ParsedRow = {};
+        resolvedHeaders.forEach((key, i) => {
+          obj[key] = (cols[i] ?? "").toString().trim();
+        });
+        return obj;
+      })
+      .filter((r) => Object.values(r).some((v) => v));
+
+    if (parsed.length === 0) { setParseError("No data rows found after the header."); return; }
+    if (parsed.length > 500) { setParseError("Maximum 500 rows per import. Please split into smaller files."); return; }
+
+    setRows(parsed);
+    setRowErrors(parsed.map(validateRow));
+    setStep("preview");
+  }, []);
+
   const handleFile = useCallback((file: File) => {
     setParseError("");
-    if (!file.name.endsWith(".csv")) { setParseError("Only .csv files are supported."); return; }
+    const isXlsx = file.name.endsWith(".xlsx") || file.name.endsWith(".xls");
+    const isCsv  = file.name.endsWith(".csv");
+    if (!isXlsx && !isCsv) { setParseError("Only .csv or .xlsx files are supported."); return; }
+
+    if (isXlsx) {
+      parseXLSX(file)
+        .then(({ headers, matrix }) => {
+          if (matrix.length < 1) { setParseError("File must have a header row and at least one data row."); return; }
+          processMatrix(headers, matrix);
+        })
+        .catch(() => setParseError("Failed to read the Excel file. Please check the file is not corrupt."));
+      return;
+    }
 
     const reader = new FileReader();
     reader.onload = (e) => {
-      const text     = e.target?.result as string;
-      const matrix   = parseCSV(text);
+      const text   = e.target?.result as string;
+      const matrix = parseCSV(text);
       if (matrix.length < 2) { setParseError("File must have a header row and at least one data row."); return; }
-
-      const fileHeaders = matrix[0].map((h) => h.toLowerCase().replace(/\s+/g, "_").trim());
-      const missing = REQUIRED_HEADERS.filter((h) => !fileHeaders.includes(h));
-      if (missing.length > 0) { setParseError(`Missing required columns: ${missing.join(", ")}`); return; }
-
-      const parsed: ParsedRow[] = matrix.slice(1)
-        .map((cols) => {
-          const obj: ParsedRow = {};
-          fileHeaders.forEach((h, i) => {
-            const key = HEADERS.find((hdr) => hdr === h) ?? h;
-            obj[key] = (cols[i] ?? "").trim();
-          });
-          return obj;
-        })
-        .filter((r) => Object.values(r).some((v) => v));
-
-      if (parsed.length === 0) { setParseError("No data rows found after the header."); return; }
-      if (parsed.length > 500) { setParseError("Maximum 500 rows per import. Please split into smaller files."); return; }
-
-      setRows(parsed);
-      setRowErrors(parsed.map(validateRow));
-      setStep("preview");
+      processMatrix(matrix[0].map((h) => h.trim()), matrix.slice(1));
     };
     reader.readAsText(file);
-  }, []);
+  }, [processMatrix]);
 
   const validRows   = rows.filter((_, i) => rowErrors[i] === null);
   const invalidCount = rows.length - validRows.length;
@@ -185,8 +301,8 @@ export function ImportLoansModal({ onClose, onImported }: { onClose: () => void;
           {/* Template download */}
           <div className="flex items-center justify-between p-3 bg-green-50 dark:bg-green-900/10 border border-green-100 dark:border-green-800/50 rounded-xl">
             <div>
-              <p className="text-sm font-semibold text-green-800 dark:text-green-300">Download CSV Template</p>
-              <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">Fill it with loan data, then upload below</p>
+              <p className="text-sm font-semibold text-green-800 dark:text-green-300">Download Template</p>
+              <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">Pre-filled with active, overdue, and pending examples</p>
             </div>
             <button
               onClick={downloadTemplate}
@@ -210,10 +326,10 @@ export function ImportLoansModal({ onClose, onImported }: { onClose: () => void;
             )}
           >
             <Upload className="w-8 h-8 text-gray-300 dark:text-gray-600 mx-auto mb-3" />
-            <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Drop your CSV file here</p>
-            <p className="text-xs text-gray-400 mt-1">or click to browse · .csv only · max 500 rows</p>
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Drop your CSV or Excel file here</p>
+            <p className="text-xs text-gray-400 mt-1">or click to browse · .csv or .xlsx · max 500 rows</p>
             <input
-              ref={fileRef} type="file" accept=".csv" className="hidden"
+              ref={fileRef} type="file" accept=".csv,.xlsx,.xls" className="hidden"
               onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
             />
           </div>
@@ -241,7 +357,7 @@ export function ImportLoansModal({ onClose, onImported }: { onClose: () => void;
             <p className="px-4 pb-3 text-[10px] text-gray-400">
               <span className="inline-block w-2 h-2 rounded-sm bg-green-100 dark:bg-green-900/30 mr-1" />
               green = required &nbsp;·&nbsp; interest_method: <code className="font-mono">flat</code> or <code className="font-mono">declining</code>
-              &nbsp;·&nbsp; frequency: 7 weekly, 14 bi-weekly, 30 monthly
+              &nbsp;·&nbsp; frequency: 7/14/30 &nbsp;·&nbsp; status: <code className="font-mono">pending</code> / <code className="font-mono">active</code> / <code className="font-mono">overdue</code> (default: active)
             </p>
           </div>
 
@@ -411,7 +527,7 @@ export function ImportLoansModal({ onClose, onImported }: { onClose: () => void;
             <div className="flex items-center gap-2 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl px-4 py-3">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
               <p className="text-sm text-emerald-700 dark:text-emerald-300 font-medium">
-                {result.imported} loan{result.imported !== 1 ? "s" : ""} imported as <strong>Pending</strong> — they still need approval before disbursement.
+                {result.imported} loan{result.imported !== 1 ? "s" : ""} imported successfully with their respective statuses.
               </p>
             </div>
           )}

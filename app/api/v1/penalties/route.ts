@@ -17,7 +17,7 @@ export async function GET(request: Request) {
 
     const cid = auth.companyId;
 
-    const [activePenalties, penaltyHistory, summaryAgg, loansWithPenalties] = await Promise.all([
+    const [activePenalties, penaltyHistory, summaryAgg, loansWithPenalties, waiverEntries, waivedAgg] = await Promise.all([
       // Loans that have an outstanding (unpaid) penalty
       prisma.loan.findMany({
         where: { companyId: cid, penaltyAmount: { gt: 0 } },
@@ -39,7 +39,31 @@ export async function GET(request: Request) {
         _sum: { penalty: true },
       }),
       prisma.loan.count({ where: { companyId: cid, penaltyAmount: { gt: 0 } } }),
+      // Waiver ledger entries
+      prisma.ledgerEntry.findMany({
+        where: { companyId: cid, type: "waiver" },
+        orderBy: { createdAt: "desc" },
+        take: 200,
+      }),
+      // Total waived across all loans
+      prisma.loan.aggregate({
+        where: { companyId: cid },
+        _sum: { penaltyWaived: true },
+      }),
     ]);
+
+    // Enrich waiver entries with customer names by looking up the referenced loans
+    const waiverLoanIds = [...new Set(waiverEntries.map((e) => e.referenceId).filter(Boolean))] as string[];
+    const waiverLoans = waiverLoanIds.length
+      ? await prisma.loan.findMany({
+          where: { id: { in: waiverLoanIds } },
+          include: { customer: { select: { names: true } } },
+        })
+      : [];
+    const waiverLoanMap = Object.fromEntries(waiverLoans.map((l) => [l.id, l]));
+
+    // Parse description: "Penalty waiver (RWF X) by [Name] — [reason]"
+    const descRegex = /^Penalty waiver[^—]*by (.+?) — (.+)$/;
 
     const totalPenaltyAccrued = activePenalties.reduce((s, l) => s + l.penaltyAmount, 0);
 
@@ -47,6 +71,7 @@ export async function GET(request: Request) {
       summary: {
         totalPenaltyAccrued,
         totalPenaltyCollected: summaryAgg._sum.penalty ?? 0,
+        totalPenaltyWaived: waivedAgg._sum.penaltyWaived ?? 0,
         loansWithPenalties,
       },
       activePenalties: activePenalties.map((l) => ({
@@ -71,6 +96,19 @@ export async function GET(request: Request) {
         recordedByName: p.recordedBy.name,
         notes: p.notes,
       })),
+      waiverHistory: waiverEntries.map((e) => {
+        const loan = e.referenceId ? waiverLoanMap[e.referenceId] : null;
+        const match = e.description.match(descRegex);
+        return {
+          id: e.id,
+          loanId: e.referenceId ?? "",
+          customerName: loan?.customer?.names ?? "—",
+          amount: e.amount,
+          waivedByName: match?.[1] ?? e.createdById ?? "—",
+          reason: match?.[2] ?? e.description,
+          date: e.createdAt,
+        };
+      }),
     });
   } catch (e) {
     console.error(e);

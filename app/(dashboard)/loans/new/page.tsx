@@ -344,7 +344,9 @@ export default function NewLoanPage() {
   }, []);
 
   const freqDays = FREQ_OPTIONS.find((o) => o.value === form.frequency)?.days ?? 30;
-  const calc     = calcLoan(form.principal, form.monthlyRate, form.installments, form.interestMethod);
+  // Use the same 30-day-month convention as the API so preview matches saved values
+  const periodRatePct = form.monthlyRate * (freqDays / 30);
+  const calc     = calcLoan(form.principal, periodRatePct, form.installments, form.interestMethod);
   const expectedCompletion = addPeriods(form.firstPaymentDate, form.installments, form.frequency);
 
   const customerAddress = selected

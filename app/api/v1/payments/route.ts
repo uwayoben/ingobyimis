@@ -5,12 +5,13 @@ import { classifyLoan } from "@/lib/loan-schedule";
 import { z } from "zod";
 
 const createSchema = z.object({
-  loanId:    z.string(),
-  amount:    z.number().positive(),
-  method:    z.enum(["cash", "bank_transfer", "mobile_money"]),
-  reference: z.string().min(1),
-  notes:     z.string().optional(),
-  date:      z.string().optional(),
+  loanId:     z.string(),
+  amount:     z.number().positive(),
+  method:     z.enum(["cash", "bank_transfer", "mobile_money"]),
+  reference:  z.string().min(1),
+  notes:      z.string().optional(),
+  date:       z.string().optional(),
+  receiptUrl: z.string().url().optional(),
 });
 
 export async function GET(request: Request) {
@@ -92,7 +93,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const { amount, loanId, method, reference, notes, date } = parsed.data;
+    const { amount, loanId, method, reference, notes, date, receiptUrl } = parsed.data;
     const paymentDate = date ? new Date(date) : new Date();
 
     // Auto-allocate: penalty → interest → principal
@@ -100,7 +101,7 @@ export async function POST(request: Request) {
     const penaltyPaid = Math.min(remaining, loan.penaltyAmount);
     remaining        -= penaltyPaid;
 
-    const periodsPerYear = 365 / loan.repaymentFrequencyDays;
+    const periodsPerYear = 360 / loan.repaymentFrequencyDays;
     const periodRate     = Number(loan.annualInterestRate) / 100 / periodsPerYear;
 
     // Both methods track total scheduled interest. For flat: fixed on original principal.
@@ -181,6 +182,7 @@ export async function POST(request: Request) {
           method,
           reference,
           notes,
+          receiptUrl,
           recordedById: auth.userId,
           companyId:    auth.companyId!,
         },
@@ -250,6 +252,7 @@ export async function POST(request: Request) {
           amountRepaidInterest:  newInterestRepaid,
           balanceOutstanding:    newBalance,
           penaltyAmount:         newPenaltyAmount,
+          penaltyPaid:           { increment: penaltyPaid },
           installmentsPaid:      newInstallmentsPaid,
           lastPaymentDate:       paymentDate,
           nextPaymentDate:       nextInst?.dueDate ?? null,

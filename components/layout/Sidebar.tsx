@@ -129,20 +129,6 @@ export function Sidebar({ onMobileClose }: { onMobileClose?: () => void }) {
         </AnimatePresence>
       </div>
 
-      {/* Role Badge */}
-      {!collapsed && (
-        <div className="px-3 pt-3 pb-2">
-          <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-white/10">
-            <div className="w-7 h-7 rounded-lg bg-green-600 flex items-center justify-center shrink-0">
-              <RoleIcon className="w-3.5 h-3.5 text-white" />
-            </div>
-            <div className="flex-1 text-left min-w-0">
-              <p className="text-xs font-semibold text-white truncate">{ROLE_LABELS[role]}</p>
-              <p className="text-[10px] text-green-300/60">Your role</p>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto px-2 py-1 space-y-0.5 scrollbar-none" style={{ scrollbarWidth: "none" }}>

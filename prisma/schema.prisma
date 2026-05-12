@@ -179,7 +179,7 @@ model Customer {
 }
 
 model Loan {
-  id            String     @id @default(cuid())
+  id            String     @id
   companyId     String
   company       Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
@@ -225,6 +225,10 @@ model Loan {
   nextPaymentDate           DateTime?
   nextPaymentAmount         Int              @default(0)
   penaltyAmount             Int              @default(0)
+  penaltyPaid               Int              @default(0)  // cumulative penalty collected in cash
+  penaltyWaived             Int              @default(0)  // cumulative penalty written off
+  penaltyWaivedByName       String?
+  penaltyWaivedAt           DateTime?
   penaltyRatePerDay         Decimal          @db.Decimal(5,3) @default(0)   // % of overdue installment per day
   lastPenaltyCalculatedAt   DateTime?                                        // last time auto-penalty was applied
 
@@ -311,6 +315,7 @@ model Payment {
   method       PaymentMethod
   reference    String        @unique
   notes        String?       @db.Text
+  receiptUrl   String?       @db.Text
   recordedById String
   recordedBy   User          @relation(fields: [recordedById], references: [id])
   companyId    String

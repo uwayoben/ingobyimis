@@ -1,21 +1,30 @@
 import { prisma } from "@/lib/prisma";
+import { LoanStatus } from "@/lib/generated/prisma/client";
 import { getAuthUser } from "@/lib/auth";
 import { ok, unauthorized, badRequest, forbidden, serverError } from "@/lib/api-response";
 import { generateSchedule, classifyLoan } from "@/lib/loan-schedule";
 import { z } from "zod";
 
+const VALID_IMPORT_STATUSES = ["pending", "active", "overdue", "completed", "written_off", "rejected", "disbursed"] as const;
+type ImportStatus = typeof VALID_IMPORT_STATUSES[number];
+
 const rowSchema = z.object({
   customer_national_id:    z.string().min(1, "customer_national_id is required"),
-  purpose:                 z.string().min(1, "purpose is required"),
-  amount:                  z.coerce.number().int().positive("amount must be a positive integer"),
-  annual_interest_rate:    z.coerce.number().positive("annual_interest_rate must be positive").max(200, "annual_interest_rate seems too high"),
-  interest_method:         z.enum(["flat", "declining"], { error: "interest_method must be 'flat' or 'declining'" }),
-  repayment_frequency_days:z.coerce.number().int().positive("repayment_frequency_days must be a positive integer"),
-  total_installments:      z.coerce.number().int().positive("total_installments must be a positive integer"),
-  first_payment_date:      z.string().min(1, "first_payment_date is required"),
+  purpose:                 z.string().optional().nullable().transform((v) => v || "Imported Loan"),
+  amount:                  z.coerce.number().positive("amount must be positive").transform(Math.round),
+  annual_interest_rate:    z.coerce.number().min(0).max(200).default(0),
+  interest_method:         z.enum(["flat", "declining"]).optional().default("flat"),
+  repayment_frequency_days:z.coerce.number().int().positive().optional().default(30),
+  total_installments:      z.coerce.number().int().positive().optional().default(12),
+  first_payment_date:      z.string().optional().nullable().transform((v) => v || undefined),
   branch_name:             z.string().optional().nullable().transform((v) => v || undefined),
   collateral_type:         z.string().optional().nullable().transform((v) => v || undefined),
-  collateral_amount:       z.coerce.number().int().positive().optional().nullable().transform((v) => v || undefined),
+  collateral_amount:       z.coerce.number().positive().optional().nullable().transform((v) => (v ? Math.round(v) : undefined)),
+  balance_outstanding:     z.coerce.number().min(0).optional().nullable().transform((v) => (v != null && v > 0 ? Math.round(v) : undefined)),
+  status:                  z.enum(VALID_IMPORT_STATUSES).optional().default("active"),
+  days_overdue:            z.coerce.number().int().min(0).optional().default(0),
+  disbursement_date:       z.string().optional().nullable().transform((v) => v || undefined),
+  penalty_rate:            z.coerce.number().min(0).optional().default(0),
 });
 
 export async function POST(request: Request) {
@@ -32,6 +41,13 @@ export async function POST(request: Request) {
 
     const errors: { row: number; message: string }[] = [];
     let imported = 0;
+
+    // Build loan ID prefix from company name
+    const company = await prisma.company.findUnique({
+      where: { id: auth.companyId! },
+      select: { name: true },
+    });
+    const idPrefix = (company?.name ?? "XX").replace(/[^a-zA-Z]/g, "").slice(0, 2).toUpperCase();
 
     for (let i = 0; i < rows.length; i++) {
       const rowNum = i + 2; // row 1 = header
@@ -52,13 +68,20 @@ export async function POST(request: Request) {
         continue;
       }
 
-      const firstPaymentDate = new Date(d.first_payment_date);
-      if (isNaN(firstPaymentDate.getTime())) {
-        errors.push({ row: rowNum, message: `Invalid first_payment_date: "${d.first_payment_date}" — use YYYY-MM-DD` });
-        continue;
+      // Derive first_payment_date: explicit > disbursement+frequency > today+frequency
+      let firstPaymentDate: Date;
+      if (d.first_payment_date) {
+        firstPaymentDate = new Date(d.first_payment_date);
+        if (isNaN(firstPaymentDate.getTime())) {
+          errors.push({ row: rowNum, message: `Invalid first_payment_date: "${d.first_payment_date}"` });
+          continue;
+        }
+      } else {
+        const base = d.disbursement_date ? new Date(d.disbursement_date) : new Date();
+        firstPaymentDate = new Date(base.getTime() + d.repayment_frequency_days * 86400_000);
       }
 
-      const periodsPerYear   = 365 / d.repayment_frequency_days;
+      const periodsPerYear   = 360 / d.repayment_frequency_days;
       const periodRate       = d.annual_interest_rate / 100 / periodsPerYear;
 
       let totalRepayable: number;
@@ -68,17 +91,35 @@ export async function POST(request: Request) {
         totalRepayable    = Math.round(d.amount + totalInterest);
         nextPaymentAmount = Math.round(totalRepayable / d.total_installments);
       } else {
-        nextPaymentAmount = periodRate === 0
-          ? Math.round(d.amount / d.total_installments)
-          : Math.round((d.amount * periodRate) / (1 - Math.pow(1 + periodRate, -d.total_installments)));
-        totalRepayable = nextPaymentAmount * d.total_installments;
+        const exactEmi = periodRate === 0
+          ? d.amount / d.total_installments
+          : (d.amount * periodRate) / (1 - Math.pow(1 + periodRate, -d.total_installments));
+        nextPaymentAmount = Math.round(exactEmi);
+        totalRepayable    = Math.round(exactEmi * d.total_installments);
       }
 
       const agreedMaturityDate = new Date(firstPaymentDate);
       agreedMaturityDate.setDate(agreedMaturityDate.getDate() + (d.total_installments - 1) * d.repayment_frequency_days);
 
-      const { loanClass, provisioningRate } = classifyLoan(0);
+      // Determine days overdue and classify accordingly
+      const importStatus: ImportStatus = d.status;
+      const daysOverdue = (importStatus === "overdue" && d.days_overdue > 0) ? d.days_overdue
+                        : (importStatus === "overdue") ? 30
+                        : d.days_overdue > 0 ? d.days_overdue : 0;
+      const { loanClass, provisioningRate } = classifyLoan(daysOverdue);
       const provisionRequired = Math.round(d.amount * provisioningRate / 100);
+
+      // For active/overdue/completed loans the principal was already disbursed
+      const isLive = importStatus !== "pending";
+      const disbursementDate = d.disbursement_date
+        ? new Date(d.disbursement_date)
+        : isLive
+          ? new Date(firstPaymentDate.getTime() - d.repayment_frequency_days * 86400_000)
+          : undefined;
+
+      const arrearsStartDate = importStatus === "overdue"
+        ? new Date(Date.now() - daysOverdue * 86400_000)
+        : undefined;
 
       const schedule = generateSchedule(
         d.amount,
@@ -91,8 +132,12 @@ export async function POST(request: Request) {
 
       try {
         await prisma.$transaction(async (tx) => {
+          const loanCount = await tx.loan.count({ where: { companyId: auth.companyId! } });
+          const loanId    = `${idPrefix}-${String(loanCount + 1).padStart(3, "0")}`;
+
           const loan = await tx.loan.create({
             data: {
+              id:                     loanId,
               companyId:              auth.companyId!,
               customerId:             customer.id,
               loanOfficerId:          auth.userId,
@@ -105,7 +150,7 @@ export async function POST(request: Request) {
               agreedMaturityDate,
               totalInstallments:      d.total_installments,
               totalRepayable,
-              balanceOutstanding:     d.amount,
+              balanceOutstanding:     d.balance_outstanding ?? (importStatus === "completed" ? 0 : d.amount),
               nextPaymentDate:        firstPaymentDate,
               nextPaymentAmount,
               branchName:             d.branch_name,
@@ -114,6 +159,12 @@ export async function POST(request: Request) {
               loanClass,
               provisioningRate,
               provisionRequired,
+              status:                 importStatus.replace("written_off", "written_off") as LoanStatus,
+              disbursedAmount:        isLive ? d.amount : 0,
+              disbursementDate:       disbursementDate ?? null,
+              daysOverdue,
+              arrearsStartDate:       arrearsStartDate ?? null,
+              penaltyRatePerDay:      d.penalty_rate > 0 ? d.penalty_rate / 365 : 0,
             },
           });
 

@@ -18,6 +18,37 @@ const SAMPLE_ROW = [
   "Rwanda Development Board", "Client", "Marie Uwase", "0789876543", "1198580012345679", "Separate",
 ];
 
+// Maps the Excel display headers (customers-2026-*.xlsx) to API camelCase keys
+const XLSX_COLUMN_MAP: Record<string, string> = {
+  "full names":               "names",
+  "national id":              "nationalId",
+  "date of birth":            "dateOfBirth",
+  "gender":                   "gender",
+  "marital status":           "maritalStatus",
+  "phone number":             "phone",
+  "email address":            "email",
+  "employment status":        "employmentStatus",
+  "employer name":            "employerName",
+  "province":                 "province",
+  "district":                 "district",
+  "sector":                   "sector",
+  "cell":                     "cell",
+  "village":                  "village",
+  "relationship with ndfsp":  "relationshipWithNdfsp",
+  "spouse name":              "spouseName",
+  "spouse phone":             "spousePhone",
+  "spouse national id":       "spouseIdNumber",
+  "marital property regime":  "maritalPropertyRegime",
+};
+
+/** Convert DD/MM/YYYY → YYYY-MM-DD. Passes through anything already ISO-shaped. */
+function normaliseDOB(raw: string): string {
+  if (!raw) return raw;
+  const ddmmyyyy = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (ddmmyyyy) return `${ddmmyyyy[3]}-${ddmmyyyy[2].padStart(2, "0")}-${ddmmyyyy[1].padStart(2, "0")}`;
+  return raw;
+}
+
 function parseCSV(text: string): string[][] {
   return text.trim().split(/\r?\n/).map((line) => {
     const cols: string[] = [];
@@ -31,6 +62,22 @@ function parseCSV(text: string): string[][] {
     cols.push(cur.trim());
     return cols;
   });
+}
+
+async function parseXLSX(file: File): Promise<{ headers: string[]; matrix: string[][] }> {
+  const { read, utils } = await import("xlsx");
+  const buf = await file.arrayBuffer();
+  const wb = read(buf);
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const raw: unknown[][] = utils.sheet_to_json(ws, { header: 1, defval: "" });
+  const headers = (raw[0] as string[]).map((h) => String(h ?? "").trim());
+  const matrix = (raw.slice(1) as unknown[][]).map((row) =>
+    headers.map((_, i) => {
+      const v = row[i];
+      return v === null || v === undefined ? "" : String(v);
+    })
+  );
+  return { headers, matrix };
 }
 
 function downloadTemplate() {
@@ -57,35 +104,60 @@ export function ImportCustomersModal({ onClose, onImported }: { onClose: () => v
   const [dragging, setDragging] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const processMatrix = useCallback((fileHeaders: string[], matrix: string[][], isXlsx: boolean) => {
+    // Resolve each file header to an API key
+    const resolvedHeaders = fileHeaders.map((h) => {
+      const lower = h.toLowerCase();
+      if (isXlsx) return XLSX_COLUMN_MAP[lower] ?? HEADERS.find((k) => k.toLowerCase() === lower) ?? lower;
+      return HEADERS.find((k) => k.toLowerCase() === lower) ?? lower;
+    });
+
+    const missing = REQUIRED_COLS.filter((r) => !resolvedHeaders.map((h) => h.toLowerCase()).includes(r));
+    if (missing.length > 0) { setParseError(`Missing required columns: ${missing.join(", ")}`); return; }
+
+    const parsed: ParsedRow[] = matrix
+      .map((cols) => {
+        const obj: ParsedRow = {};
+        resolvedHeaders.forEach((key, i) => {
+          let val = cols[i] ?? "";
+          if (key === "dateOfBirth") val = normaliseDOB(val);
+          if (key === "nationalId")  val = val.replace(/\.0$/, ""); // strip Excel float suffix
+          obj[key] = val;
+        });
+        return obj;
+      })
+      .filter((r) => Object.values(r).some((v) => v));
+
+    setRows(parsed);
+    setStep("preview");
+  }, []);
+
   const handleFile = useCallback((file: File) => {
     setParseError("");
-    if (!file.name.endsWith(".csv")) { setParseError("Only .csv files are supported."); return; }
+    const isXlsx = file.name.endsWith(".xlsx") || file.name.endsWith(".xls");
+    const isCsv  = file.name.endsWith(".csv");
+    if (!isXlsx && !isCsv) { setParseError("Only .xlsx or .csv files are supported."); return; }
+
+    if (isXlsx) {
+      parseXLSX(file)
+        .then(({ headers, matrix }) => {
+          if (matrix.length < 1) { setParseError("File must have a header row and at least one data row."); return; }
+          processMatrix(headers, matrix, true);
+        })
+        .catch(() => setParseError("Failed to read the Excel file. Please check the file is not corrupt."));
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = (e) => {
       const text = e.target?.result as string;
       const matrix = parseCSV(text);
       if (matrix.length < 2) { setParseError("File must have a header row and at least one data row."); return; }
-
       const fileHeaders = matrix[0].map((h) => h.toLowerCase().trim());
-      const missing = REQUIRED_COLS.filter((h) => !fileHeaders.includes(h));
-      if (missing.length > 0) { setParseError(`Missing required columns: ${missing.join(", ")}`); return; }
-
-      const parsed: ParsedRow[] = matrix.slice(1)
-        .map((cols) => {
-          const obj: ParsedRow = {};
-          fileHeaders.forEach((h, i) => {
-            const key = HEADERS.find((hdr) => hdr.toLowerCase() === h) ?? h;
-            obj[key] = cols[i] ?? "";
-          });
-          return obj;
-        })
-        .filter((r) => Object.values(r).some((v) => v));
-
-      setRows(parsed);
-      setStep("preview");
+      processMatrix(fileHeaders, matrix.slice(1), false);
     };
     reader.readAsText(file);
-  }, []);
+  }, [processMatrix]);
 
   const handleImport = async () => {
     setLoading(true);
@@ -133,9 +205,9 @@ export function ImportCustomersModal({ onClose, onImported }: { onClose: () => v
               ${dragging ? "border-green-500 bg-green-50 dark:bg-green-900/10" : "border-gray-200 dark:border-gray-700 hover:border-green-400 hover:bg-gray-50 dark:hover:bg-gray-800/50"}`}
           >
             <Upload className="w-8 h-8 text-gray-300 dark:text-gray-600 mx-auto mb-3" />
-            <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Drop your CSV file here</p>
-            <p className="text-xs text-gray-400 mt-1">or click to browse · .csv only · max 500 rows</p>
-            <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Drop your CSV or Excel file here</p>
+            <p className="text-xs text-gray-400 mt-1">or click to browse · .csv or .xlsx · max 500 rows</p>
+            <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
           </div>
 
           {/* Column reference */}

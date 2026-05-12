@@ -47,9 +47,21 @@ export async function POST(request: Request) {
         errors.push({ row: i + 2, message: parsed.error.issues[0].message });
         continue;
       }
+      // Support DD/MM/YYYY (Excel export) in addition to YYYY-MM-DD
+      let dob: Date;
+      const ddmm = parsed.data.dateOfBirth.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      if (ddmm) {
+        dob = new Date(`${ddmm[3]}-${ddmm[2].padStart(2, "0")}-${ddmm[1].padStart(2, "0")}`);
+      } else {
+        dob = new Date(parsed.data.dateOfBirth);
+      }
+      if (isNaN(dob.getTime())) {
+        errors.push({ row: i + 2, message: `Invalid dateOfBirth: "${parsed.data.dateOfBirth}" — use YYYY-MM-DD or DD/MM/YYYY` });
+        continue;
+      }
       valid.push({
         ...parsed.data,
-        dateOfBirth: new Date(parsed.data.dateOfBirth),
+        dateOfBirth: dob,
         companyId: auth.companyId!,
       });
     }

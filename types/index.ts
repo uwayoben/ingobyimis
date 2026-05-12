@@ -132,6 +132,10 @@ export interface Loan {
   nextPaymentDate?: string;
   nextPaymentAmount: number;
   penaltyAmount: number;
+  penaltyPaid: number;
+  penaltyWaived: number;
+  penaltyWaivedByName?: string;
+  penaltyWaivedAt?: string;
   penaltyRatePerDay: number;
   lastPenaltyCalculatedAt?: string;
   collateralType?: string;
@@ -169,6 +173,7 @@ export interface Payment {
   recordedById: string;
   companyId: string;
   notes?: string;
+  receiptUrl?: string;
 }
 
 export interface Notification {

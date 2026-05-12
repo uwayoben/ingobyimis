@@ -129,7 +129,7 @@ export default function CustomersPage() {
             onClick={() => setShowImport(true)}
             className="bg-white/20 hover:bg-white/30 backdrop-blur-sm border border-white/30 text-white text-sm font-semibold px-4 py-2 rounded-xl inline-flex items-center gap-1.5 transition-colors"
           >
-            <Upload className="w-4 h-4" /> Import CSV
+            <Upload className="w-4 h-4" /> Import
           </button>
         </div>
       </motion.div>
@@ -246,7 +246,7 @@ export default function CustomersPage() {
         />
       </Modal>
 
-      <Modal isOpen={showImport} onClose={() => setShowImport(false)} title="Import Customers from CSV" size="lg">
+      <Modal isOpen={showImport} onClose={() => setShowImport(false)} title="Import Customers" size="lg">
         <ImportCustomersModal
           onClose={() => setShowImport(false)}
           onImported={() => { fetchCustomers(); }}

@@ -69,12 +69,25 @@ export async function GET(request: Request) {
       prisma.loan.count({ where }),
     ]);
 
+    const loanIds = loans.map((l) => l.id);
+    const penaltyGroups = loanIds.length
+      ? await prisma.payment.groupBy({
+          by: ["loanId"],
+          where: { loanId: { in: loanIds } },
+          _sum: { penalty: true },
+        })
+      : [];
+    const penaltyPaidMap = Object.fromEntries(
+      penaltyGroups.map((g) => [g.loanId, g._sum.penalty ?? 0])
+    );
+
     const data = loans.map((l) => ({
       ...l,
       customerName:      l.customer.names,
       annualInterestRate: Number(l.annualInterestRate),
       provisioningRate:   Number(l.provisioningRate),
       installmentsOutstanding: l.totalInstallments - l.installmentsPaid,
+      penaltyPaid: penaltyPaidMap[l.id] ?? 0,
     }));
 
     return paginated(data, total, page, limit);
@@ -97,7 +110,7 @@ export async function POST(request: Request) {
 
     const d = parsed.data;
     const firstPaymentDate = new Date(d.firstPaymentDate);
-    const periodsPerYear   = 365 / d.repaymentFrequencyDays;
+    const periodsPerYear   = 360 / d.repaymentFrequencyDays;
     const periodRate       = d.annualInterestRate / 100 / periodsPerYear;
 
     // Total repayable
@@ -108,10 +121,11 @@ export async function POST(request: Request) {
       totalRepayable    = Math.round(d.amount + totalInterest);
       nextPaymentAmount = Math.round(totalRepayable / d.totalInstallments);
     } else {
-      nextPaymentAmount = periodRate === 0
-        ? Math.round(d.amount / d.totalInstallments)
-        : Math.round((d.amount * periodRate) / (1 - Math.pow(1 + periodRate, -d.totalInstallments)));
-      totalRepayable = nextPaymentAmount * d.totalInstallments;
+      const exactEmi = periodRate === 0
+        ? d.amount / d.totalInstallments
+        : (d.amount * periodRate) / (1 - Math.pow(1 + periodRate, -d.totalInstallments));
+      nextPaymentAmount = Math.round(exactEmi);
+      totalRepayable    = Math.round(exactEmi * d.totalInstallments);
     }
 
     // Agreed maturity date = firstPaymentDate + (n-1) * frequencyDays
@@ -132,9 +146,21 @@ export async function POST(request: Request) {
       d.repaymentFrequencyDays,
     );
 
+    // Build the custom loan ID: first 2 letters of company name + zero-padded sequence
+    const company = await prisma.company.findUnique({
+      where: { id: auth.companyId! },
+      select: { name: true },
+    });
+    const prefix = (company?.name ?? "XX").replace(/[^a-zA-Z]/g, "").slice(0, 2).toUpperCase();
+
     const loan = await prisma.$transaction(async (tx) => {
+      const loanCount = await tx.loan.count({ where: { companyId: auth.companyId! } });
+      const seq    = String(loanCount + 1).padStart(3, "0");
+      const loanId = `${prefix}-${seq}`;
+
       const newLoan = await tx.loan.create({
         data: {
+          id:                     loanId,
           companyId:              auth.companyId!,
           customerId:             d.customerId,
           loanOfficerId:          auth.userId,

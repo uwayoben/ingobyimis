@@ -1,9 +1,9 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import {
-  AlertTriangle, Plus, Search, ArrowDownUp, Loader2,
-  ReceiptText, ShieldAlert, CheckCircle2, Clock, CreditCard,
-  TrendingDown, History,
+  AlertTriangle, Plus, Search, Loader2,
+  ReceiptText, ShieldAlert, CheckCircle2, CreditCard,
+  History, MinusCircle, User,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/Button";
@@ -59,9 +59,20 @@ interface PenaltyHistoryEntry {
   notes: string | null;
 }
 
+interface WaiverEntry {
+  id: string;
+  loanId: string;
+  customerName: string;
+  amount: number;
+  waivedByName: string;
+  reason: string;
+  date: string;
+}
+
 interface Summary {
   totalPenaltyAccrued: number;
   totalPenaltyCollected: number;
+  totalPenaltyWaived: number;
   loansWithPenalties: number;
 }
 
@@ -168,12 +179,13 @@ function AddPenaltyForm({ onClose, onSaved }: { onClose: () => void; onSaved: ()
   );
 }
 
-type ActiveTab = "active" | "history";
+type ActiveTab = "active" | "history" | "waivers";
 
 export default function PenaltiesPage() {
-  const [summary, setSummary] = useState<Summary>({ totalPenaltyAccrued: 0, totalPenaltyCollected: 0, loansWithPenalties: 0 });
+  const [summary, setSummary] = useState<Summary>({ totalPenaltyAccrued: 0, totalPenaltyCollected: 0, totalPenaltyWaived: 0, loansWithPenalties: 0 });
   const [activePenalties, setActivePenalties] = useState<ActivePenalty[]>([]);
   const [penaltyHistory, setPenaltyHistory] = useState<PenaltyHistoryEntry[]>([]);
+  const [waiverHistory, setWaiverHistory] = useState<WaiverEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<ActiveTab>("active");
   const [search, setSearch] = useState("");
@@ -185,9 +197,10 @@ export default function PenaltiesPage() {
       const res = await apiFetch("/api/v1/penalties");
       if (!res.ok) return;
       const json = await res.json();
-      setSummary(json.data?.summary ?? { totalPenaltyAccrued: 0, totalPenaltyCollected: 0, loansWithPenalties: 0 });
+      setSummary(json.data?.summary ?? { totalPenaltyAccrued: 0, totalPenaltyCollected: 0, totalPenaltyWaived: 0, loansWithPenalties: 0 });
       setActivePenalties(json.data?.activePenalties ?? []);
       setPenaltyHistory(json.data?.penaltyHistory ?? []);
+      setWaiverHistory(json.data?.waiverHistory ?? []);
     } finally {
       setLoading(false);
     }
@@ -200,6 +213,9 @@ export default function PenaltiesPage() {
   );
   const filteredHistory = penaltyHistory.filter((p) =>
     !search || p.customerName.toLowerCase().includes(search.toLowerCase()) || p.reference.toLowerCase().includes(search.toLowerCase())
+  );
+  const filteredWaivers = waiverHistory.filter((w) =>
+    !search || w.customerName.toLowerCase().includes(search.toLowerCase()) || w.waivedByName.toLowerCase().includes(search.toLowerCase()) || w.loanId.toLowerCase().includes(search.toLowerCase())
   );
 
   const summaryCards = [
@@ -220,12 +236,20 @@ export default function PenaltiesPage() {
       iconBg: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
     },
     {
+      label: "Total Waived",
+      value: formatCurrency(summary.totalPenaltyWaived),
+      sub: "Penalties written off",
+      icon: <MinusCircle className="w-5 h-5" />,
+      border: "border-l-amber-500",
+      iconBg: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+    },
+    {
       label: "Loans with Penalties",
       value: summary.loansWithPenalties.toString(),
       sub: "Loans carrying a balance",
       icon: <ShieldAlert className="w-5 h-5" />,
-      border: "border-l-amber-500",
-      iconBg: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+      border: "border-l-orange-500",
+      iconBg: "bg-orange-500/15 text-orange-600 dark:text-orange-400",
     },
   ];
 
@@ -258,6 +282,10 @@ export default function PenaltiesPage() {
               <p className="text-base sm:text-lg font-bold">RWF {(summary.totalPenaltyCollected / 1_000).toFixed(0)}K</p>
               <p className="text-xs text-red-100/70">Collected</p>
             </div>
+            <div className="bg-white/15 backdrop-blur-sm rounded-xl px-3 py-2 text-center">
+              <p className="text-base sm:text-lg font-bold">RWF {(summary.totalPenaltyWaived / 1_000).toFixed(0)}K</p>
+              <p className="text-xs text-red-100/70">Waived</p>
+            </div>
           </div>
         </div>
         <div className="relative mt-4">
@@ -271,7 +299,7 @@ export default function PenaltiesPage() {
       </motion.div>
 
       {/* ── Summary Cards ─────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {summaryCards.map((card, i) => (
           <motion.div
             key={card.label}
@@ -320,6 +348,22 @@ export default function PenaltiesPage() {
             <History className="w-3.5 h-3.5" />
             Collection History
           </button>
+          <button
+            onClick={() => setTab("waivers")}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+              tab === "waivers"
+                ? "bg-white dark:bg-gray-900 text-gray-900 dark:text-white shadow-sm"
+                : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
+            }`}
+          >
+            <MinusCircle className="w-3.5 h-3.5" />
+            Waivers
+            {waiverHistory.length > 0 && (
+              <span className="ml-1 text-[10px] bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 rounded-full px-1.5 py-0.5 font-bold">
+                {waiverHistory.length}
+              </span>
+            )}
+          </button>
         </div>
 
         <div className="relative sm:ml-auto">
@@ -327,7 +371,7 @@ export default function PenaltiesPage() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder={tab === "active" ? "Search by customer or loan…" : "Search by customer or reference…"}
+            placeholder={tab === "active" ? "Search by customer or loan…" : tab === "history" ? "Search by customer or reference…" : "Search by customer, loan or officer…"}
             className="w-full sm:w-64 pl-9 pr-4 py-2.5 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition-all"
           />
         </div>
@@ -508,6 +552,96 @@ export default function PenaltiesPage() {
                     );
                   })}
                 </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Waiver History ────────────────────────────────────────────── */}
+      {tab === "waivers" && (
+        <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-800 flex items-center gap-2">
+            <MinusCircle className="w-4 h-4 text-amber-500" />
+            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+              {filteredWaivers.length} waiver{filteredWaivers.length !== 1 ? "s" : ""} recorded
+            </p>
+            {summary.totalPenaltyWaived > 0 && (
+              <span className="ml-auto text-xs font-semibold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-2.5 py-1 rounded-lg">
+                Total: {formatCurrency(summary.totalPenaltyWaived)}
+              </span>
+            )}
+          </div>
+
+          {loading ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 className="w-5 h-5 animate-spin text-amber-500" />
+            </div>
+          ) : filteredWaivers.length === 0 ? (
+            <EmptyState
+              icon={<MinusCircle className="w-6 h-6" />}
+              title="No waivers recorded"
+              description="Penalty waivers will appear here once a penalty is waived on a loan."
+            />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/30">
+                    {["Customer", "Loan ID", "Amount Waived", "Waived By", "Reason", "Date"].map((h) => (
+                      <th key={h} className="text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-4 py-3 first:pl-6 last:pr-6">
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
+                  {filteredWaivers.map((w, i) => (
+                    <motion.tr
+                      key={w.id}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: i * 0.03 }}
+                      className="hover:bg-amber-50/30 dark:hover:bg-amber-900/5 transition-colors"
+                    >
+                      <td className="pl-6 pr-4 py-3.5">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center text-amber-700 dark:text-amber-400 text-xs font-bold shrink-0">
+                            {w.customerName[0]}
+                          </div>
+                          <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{w.customerName}</p>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <span className="text-xs font-mono font-semibold text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded-md">
+                          {w.loanId ? w.loanId.slice(0, 12).toUpperCase() : "—"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <span className="text-sm font-bold text-amber-600 dark:text-amber-400">{formatCurrency(w.amount)}</span>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <div className="flex items-center gap-1.5">
+                          <User className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                          <span className="text-xs font-medium text-gray-700 dark:text-gray-300">{w.waivedByName}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <p className="text-xs text-gray-500 dark:text-gray-400 max-w-xs truncate" title={w.reason}>{w.reason}</p>
+                      </td>
+                      <td className="px-4 pr-6 py-3.5 text-xs text-gray-400 whitespace-nowrap">{formatDate(w.date)}</td>
+                    </motion.tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-xs font-semibold">
+                    <td colSpan={2} className="pl-6 pr-4 py-3 text-gray-600 dark:text-gray-400">Total Waived</td>
+                    <td className="px-4 py-3 text-amber-600 dark:text-amber-400">
+                      {formatCurrency(filteredWaivers.reduce((s, w) => s + w.amount, 0))}
+                    </td>
+                    <td colSpan={3} />
+                  </tr>
+                </tfoot>
               </table>
             </div>
           )}

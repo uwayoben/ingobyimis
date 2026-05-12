@@ -16,7 +16,7 @@ function formatCurrency(n: number) {
 }
 
 function loanPeriodRate(loan: Loan): number {
-  return loan.annualInterestRate / 100 / (365 / loan.repaymentFrequencyDays);
+  return loan.annualInterestRate / 100 / (360 / loan.repaymentFrequencyDays);
 }
 
 function trueOutstanding(loan: Loan): number {
@@ -25,13 +25,6 @@ function trueOutstanding(loan: Loan): number {
   return loan.balanceOutstanding + interestRemaining + loan.penaltyAmount;
 }
 
-function freqLabel(days: number) {
-  if (days === 1)  return "Daily";
-  if (days === 7)  return "Weekly";
-  if (days === 14) return "Bi-weekly";
-  if (days === 30) return "Monthly";
-  return `${days}d`;
-}
 
 const STATUS_TABS: { label: string; value: LoanStatus | "all" }[] = [
   { label: "All",        value: "all" },
@@ -263,18 +256,19 @@ export default function LoansPage() {
           />
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[900px]">
+            <table className="w-full min-w-[1200px]">
               <thead>
                 <tr className="border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/30">
                   {[
                     "Loan / Customer",
                     "Class · Status",
-                    "Principal",
-                    "Total Paid",
+                    "Loan Amount",
+                    "Principal Paid",
+                    "Principal Remaining",
+                    "Interest Paid",
+                    "Interest Remaining",
                     "Penalty",
-                    "Outstanding",
                     "Due Date",
-                    "Rate / Freq",
                   ].map((h) => (
                     <th key={h} className="text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-4 py-3 first:pl-6 last:pr-6">
                       {h}
@@ -285,8 +279,7 @@ export default function LoansPage() {
               <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
                 <AnimatePresence>
                   {displayed.map((loan, i) => {
-                    const totalPaid = loan.amountRepaidPrincipal + loan.amountRepaidInterest;
-                    const totalOutstanding = trueOutstanding(loan);
+                    const interestRemaining = Math.max(0, (loan.totalRepayable - loan.amount) - loan.amountRepaidInterest);
                     const isPastDue = new Date(loan.agreedMaturityDate) < new Date() && !["completed", "written_off", "rejected"].includes(loan.status);
 
                     return (
@@ -323,45 +316,35 @@ export default function LoansPage() {
                           </div>
                         </td>
 
-                        {/* Principal */}
+                        {/* Loan Amount */}
                         <td className="px-4 py-3.5">
                           <p className="text-sm font-bold text-gray-900 dark:text-gray-100">{formatCurrency(loan.amount)}</p>
-                          <p className="text-[10px] text-gray-400">{loan.interestMethod} · {loan.annualInterestRate}%</p>
+                          <p className="text-[10px] text-gray-400">{loan.interestMethod} · {loan.annualInterestRate / 12}%/mo</p>
                         </td>
 
-                        {/* Total Paid */}
+                        {/* Principal Paid */}
                         <td className="px-4 py-3.5">
-                          <p className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">{formatCurrency(totalPaid)}</p>
-                          {loan.amountRepaidPrincipal > 0 && (
-                            <p className="text-[10px] text-gray-400">Princ: {formatCurrency(loan.amountRepaidPrincipal)}</p>
-                          )}
+                          <p className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+                            {formatCurrency(loan.amountRepaidPrincipal)}
+                          </p>
+                          <p className="text-[10px] text-gray-400">
+                            of {formatCurrency(loan.amount)}
+                          </p>
                         </td>
 
-                        {/* Penalty */}
+                        {/* Principal Remaining */}
                         <td className="px-4 py-3.5">
-                          {loan.penaltyAmount > 0 ? (
-                            <span className="inline-flex items-center gap-1 text-xs font-bold text-red-600 dark:text-red-400">
-                              <AlertTriangle className="w-3 h-3" />
-                              {formatCurrency(loan.penaltyAmount)}
-                            </span>
-                          ) : (
-                            <span className="text-gray-300 dark:text-gray-600 text-xs">—</span>
-                          )}
-                        </td>
-
-                        {/* Outstanding */}
-                        <td className="px-4 py-3.5">
-                          {totalOutstanding > 0 ? (
-                            <div>
-                              <p className={`text-sm font-bold ${totalOutstanding > 0 ? "text-red-600 dark:text-red-400" : "text-gray-400"}`}>
-                                {formatCurrency(totalOutstanding)}
+                          {loan.balanceOutstanding > 0 ? (
+                            <>
+                              <p className="text-sm font-semibold text-red-600 dark:text-red-400">
+                                {formatCurrency(loan.balanceOutstanding)}
                               </p>
                               {loan.daysOverdue > 0 && (
                                 <span className={`inline-flex text-[10px] font-semibold px-1.5 py-0.5 rounded-md ${loan.daysOverdue > 30 ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"}`}>
                                   {loan.daysOverdue}d overdue
                                 </span>
                               )}
-                            </div>
+                            </>
                           ) : (
                             <span className="text-emerald-600 dark:text-emerald-400 text-xs font-semibold flex items-center gap-1">
                               <CheckCircle2 className="w-3 h-3" /> Cleared
@@ -369,8 +352,50 @@ export default function LoansPage() {
                           )}
                         </td>
 
-                        {/* Due Date */}
+                        {/* Interest Paid */}
                         <td className="px-4 py-3.5">
+                          <p className="text-sm font-semibold text-amber-600 dark:text-amber-400">
+                            {formatCurrency(loan.amountRepaidInterest)}
+                          </p>
+                          <p className="text-[10px] text-gray-400">
+                            of {formatCurrency(loan.totalRepayable - loan.amount)}
+                          </p>
+                        </td>
+
+                        {/* Interest Remaining */}
+                        <td className="px-4 py-3.5">
+                          {interestRemaining > 0 ? (
+                            <p className="text-sm font-semibold text-amber-700 dark:text-amber-300">
+                              {formatCurrency(interestRemaining)}
+                            </p>
+                          ) : (
+                            <span className="text-emerald-600 dark:text-emerald-400 text-xs font-semibold flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3" /> Cleared
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Penalty */}
+                        <td className="px-4 py-3.5">
+                          {(() => {
+                            const paid = loan.penaltyPaid ?? 0;
+                            const outstanding = loan.penaltyAmount;
+                            const total = outstanding + paid;
+                            if (total === 0) return <span className="text-gray-300 dark:text-gray-600 text-xs">—</span>;
+                            return (
+                              <div>
+                                <span className="inline-flex items-center gap-1 text-xs font-bold text-red-600 dark:text-red-400">
+                                  <AlertTriangle className="w-3 h-3" />
+                                  {formatCurrency(outstanding)}
+                                </span>
+                                {paid > 0 && <p className="text-[10px] text-gray-400 mt-0.5">Paid: {formatCurrency(paid)}</p>}
+                              </div>
+                            );
+                          })()}
+                        </td>
+
+                        {/* Due Date */}
+                        <td className="px-4 pr-6 py-3.5">
                           <div className={`text-xs font-medium flex items-center gap-1 ${isPastDue ? "text-red-600 dark:text-red-400" : "text-gray-600 dark:text-gray-400"}`}>
                             {isPastDue && <AlertTriangle className="w-3 h-3 shrink-0" />}
                             {formatDate(loan.agreedMaturityDate)}
@@ -380,11 +405,6 @@ export default function LoansPage() {
                           )}
                         </td>
 
-                        {/* Rate / Freq */}
-                        <td className="px-4 pr-6 py-3.5 text-xs text-gray-600 dark:text-gray-400">
-                          <p className="font-semibold text-gray-900 dark:text-gray-200">{loan.annualInterestRate}% p.a.</p>
-                          <p className="text-gray-400">{freqLabel(loan.repaymentFrequencyDays)}</p>
-                        </td>
                       </motion.tr>
                     );
                   })}
