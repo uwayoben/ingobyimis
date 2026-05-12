@@ -1,0 +1,35 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd ${{ secrets.VPS_PATH }}
+
+            echo "📥 Pulling latest code..."
+            git pull origin main
+
+            echo "📦 Installing dependencies..."
+            npm install
+
+            echo "🧬 Generating Prisma..."
+            npx prisma generate
+
+            echo "🏗️ Building app..."
+            npm run build
+
+            echo "🔁 Restarting PM2..."
+            pm2 restart nextjs-app
