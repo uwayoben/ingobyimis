@@ -6,7 +6,7 @@ import { Navbar } from "@/components/layout/Navbar";
 import { useIdleTimeout } from "@/hooks/useIdleTimeout";
 import { LogOut, Clock } from "lucide-react";
 
-const IDLE_MS  = 3 * 60 * 1000; // 3 minutes total idle time
+const IDLE_MS  = 30 * 60 * 1000; // 30 minutes total idle time
 const WARN_MS  = 30 * 1000;      // show warning 30 s before logout
 
 function IdleWarningModal({ secondsLeft, onStay, onLogout }: {

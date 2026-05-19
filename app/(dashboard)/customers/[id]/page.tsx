@@ -1,13 +1,14 @@
 "use client";
 import { use, useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Phone, Mail, MapPin, Briefcase, CreditCard, TrendingUp, User, Heart, Building2, Loader2, Calculator, ChevronDown, ChevronUp } from "lucide-react";
+import { ArrowLeft, Phone, Mail, MapPin, Briefcase, CreditCard, TrendingUp, User, Heart, Building2, Loader2, Calculator, ChevronDown, ChevronUp, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { formatDate, STATUS_COLORS, STATUS_LABELS } from "@/lib/utils";
 import { apiFetch } from "@/lib/api-fetch";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { RoleGate } from "@/components/RoleContext";
 import { generateSchedule, FREQUENCY_DAYS } from "@/lib/loan-schedule";
 
 function formatCurrency(n: number) {
@@ -19,6 +20,8 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   const router = useRouter();
   const [customer, setCustomer] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   // Loan calculator state
   const [calcOpen, setCalcOpen] = useState(false);
@@ -49,6 +52,24 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
     const emi = calcSchedule[0]?.totalDue ?? 0;
     return { totalInterest, totalRepayable, emi };
   }, [calcSchedule]);
+
+  async function handleDelete() {
+    setDeleting(true);
+    try {
+      const res = await apiFetch(`/api/v1/customers/${id}`, { method: "DELETE" });
+      const json = await res.json();
+      if (!res.ok) {
+        alert(json.error ?? "Failed to delete customer.");
+        return;
+      }
+      router.push("/customers");
+    } catch {
+      alert("Failed to delete customer.");
+    } finally {
+      setDeleting(false);
+      setConfirmDelete(false);
+    }
+  }
 
   useEffect(() => {
     apiFetch(`/api/v1/customers/${id}`)
@@ -94,6 +115,16 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
         </div>
         <Badge variant={customer.isActive ? "success" : "neutral"}>{customer.isActive ? "Active" : "Inactive"}</Badge>
         <Button size="sm" onClick={() => router.push(`/loans/new?customerId=${customer.id}`)}>Create Loan</Button>
+        <RoleGate roles={["super_admin", "managing_director"]}>
+          <button
+            type="button"
+            onClick={() => setConfirmDelete(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-red-600 border border-red-200 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-900/20 transition-colors"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            Delete
+          </button>
+        </RoleGate>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -406,6 +437,44 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
           </Card>
         </div>
       </div>
+
+      {confirmDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-900 rounded-xl shadow-xl p-6 max-w-sm w-full mx-4">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-red-600 dark:text-red-400" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-gray-900 dark:text-gray-100">Delete Customer</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400">This action cannot be undone.</p>
+              </div>
+            </div>
+            <p className="text-sm text-gray-600 dark:text-gray-300 mb-5">
+              Are you sure you want to delete <span className="font-semibold">{customer.names}</span>? All associated data will be permanently removed.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(false)}
+                disabled={deleting}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={deleting}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-60 transition-colors flex items-center gap-1.5"
+              >
+                {deleting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

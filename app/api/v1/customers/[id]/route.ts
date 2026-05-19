@@ -79,12 +79,17 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
   try {
     const auth = getAuthUser(request);
     if (!auth) return unauthorized();
-    if (auth.role !== "super_admin") return forbidden("Only super admins can delete customers.");
+
+    const canDelete = auth.role === "super_admin" || auth.role === "managing_director";
+    if (!canDelete) return forbidden("Only super admins and managing directors can delete customers.");
 
     const { id } = await params;
 
-    const customer = await prisma.customer.findUnique({
-      where: { id },
+    const customer = await prisma.customer.findFirst({
+      where: {
+        id,
+        ...(auth.role !== "super_admin" ? { companyId: auth.companyId! } : {}),
+      },
       include: { _count: { select: { loans: true } } },
     });
 
