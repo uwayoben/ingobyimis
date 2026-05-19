@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getAuthUser } from "@/lib/auth";
-import { ok, notFound, unauthorized, forbidden, badRequest, serverError } from "@/lib/api-response";
+import { ok, notFound, unauthorized, forbidden, serverError } from "@/lib/api-response";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -90,24 +90,21 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
         id,
         ...(auth.role !== "super_admin" ? { companyId: auth.companyId! } : {}),
       },
-      include: { _count: { select: { loans: true, payments: true } } },
     });
 
     if (!customer) return notFound("Customer not found.");
 
-    if (customer._count.loans > 0) {
-      return badRequest(
-        `Cannot delete — this customer has ${customer._count.loans} loan record(s). Remove all associated loans first.`
-      );
-    }
-
-    if (customer._count.payments > 0) {
-      return badRequest(
-        `Cannot delete — this customer has ${customer._count.payments} payment record(s). Remove all associated loans and payments first.`
-      );
-    }
-
-    await prisma.customer.delete({ where: { id } });
+    // Cascade-delete all related records in FK-safe order before deleting the customer.
+    // Loan sub-records (Installment, LoanFee, LoanDocument) have onDelete: Cascade on Loan,
+    // but Payment→Loan and Payment→Customer do not, so they must be deleted explicitly first.
+    await prisma.$transaction(async (tx) => {
+      await tx.installment.deleteMany({ where: { loan: { customerId: id } } });
+      await tx.loanFee.deleteMany({ where: { loan: { customerId: id } } });
+      await tx.loanDocument.deleteMany({ where: { loan: { customerId: id } } });
+      await tx.payment.deleteMany({ where: { customerId: id } });
+      await tx.loan.deleteMany({ where: { customerId: id } });
+      await tx.customer.delete({ where: { id } });
+    });
 
     return ok({ message: "Customer deleted successfully." });
   } catch (e) {

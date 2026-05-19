@@ -452,9 +452,14 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                 <p className="text-sm text-gray-500 dark:text-gray-400">This action cannot be undone.</p>
               </div>
             </div>
-            <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
-              Are you sure you want to delete <span className="font-semibold">{customer.names}</span>? All associated data will be permanently removed.
+            <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
+              Are you sure you want to delete <span className="font-semibold">{customer.names}</span>? This will permanently remove the customer and all their data.
             </p>
+            {loans.length > 0 && (
+              <div className="mb-4 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+                <span className="font-semibold">{loans.length} loan{loans.length !== 1 ? "s" : ""}</span> and all associated payments, installments and documents will also be deleted.
+              </div>
+            )}
             {deleteError && (
               <div className="mb-4 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 px-3 py-2 text-sm text-red-700 dark:text-red-400">
                 {deleteError}
