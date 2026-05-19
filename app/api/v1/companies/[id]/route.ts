@@ -1,6 +1,38 @@
 import { prisma } from "@/lib/prisma";
 import { getAuthUser } from "@/lib/auth";
-import { ok, unauthorized, forbidden, notFound, serverError } from "@/lib/api-response";
+import { ok, badRequest, unauthorized, forbidden, notFound, serverError } from "@/lib/api-response";
+
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const auth = getAuthUser(request);
+    if (!auth) return unauthorized();
+    if (auth.role !== "super_admin") return forbidden();
+
+    const { id } = await params;
+    const body = await request.json();
+    const { status } = body;
+
+    if (!["active", "suspended", "trial"].includes(status)) {
+      return badRequest("Invalid status. Must be active, suspended, or trial.");
+    }
+
+    const company = await prisma.company.findUnique({ where: { id } });
+    if (!company) return notFound("Company not found.");
+
+    const updated = await prisma.company.update({
+      where: { id },
+      data: { status },
+    });
+
+    return ok(updated);
+  } catch (e) {
+    console.error(e);
+    return serverError();
+  }
+}
 
 export async function DELETE(
   request: Request,

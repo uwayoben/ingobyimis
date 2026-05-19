@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Shield, Building2, BarChart3, Users, Globe, Settings2, UserPlus, Loader2, ChevronDown, Bell, Send, ClipboardList, CheckCircle, XCircle, AlertCircle, LogIn, Search, ChevronLeft, ChevronRight, Trash2, TriangleAlert } from "lucide-react";
+import { Plus, Shield, Building2, BarChart3, Users, Globe, UserPlus, Loader2, ChevronDown, Bell, Send, ClipboardList, CheckCircle, XCircle, AlertCircle, LogIn, Search, ChevronLeft, ChevronRight, Trash2, TriangleAlert, Ban, LockOpen } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -708,6 +708,7 @@ export default function AdminPage() {
   const [deleteTarget, setDeleteTarget] = useState<Company | null>(null);
   const [showSendNotif, setShowSendNotif] = useState(false);
   const [activeTab, setActiveTab] = useState<"companies" | "audit">("companies");
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const fetchCompanies = useCallback(async () => {
     setLoading(true);
@@ -722,6 +723,24 @@ export default function AdminPage() {
   }, []);
 
   useEffect(() => { fetchCompanies(); }, [fetchCompanies]);
+
+  const handleToggleStatus = useCallback(async (company: Company) => {
+    const newStatus = company.status === "suspended" ? "active" : "suspended";
+    setTogglingId(company.id);
+    try {
+      const res = await apiFetch(`/api/v1/companies/${company.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (!res.ok) return;
+      setCompanies((prev) =>
+        prev.map((c) => c.id === company.id ? { ...c, status: newStatus } : c)
+      );
+    } finally {
+      setTogglingId(null);
+    }
+  }, []);
 
   const totalPortfolio = companies.reduce((s, c) => s + c.totalPortfolio, 0);
   const totalLoans = companies.reduce((s, c) => s + c.activeLoans, 0);
@@ -837,7 +856,9 @@ export default function AdminPage() {
                 key={company.id}
                 company={company}
                 gradient={COMPANY_GRADIENTS[i % COMPANY_GRADIENTS.length]}
+                toggling={togglingId === company.id}
                 onManageUsers={() => setSelectedCompany(company)}
+                onToggleStatus={() => handleToggleStatus(company)}
                 onDelete={() => setDeleteTarget(company)}
               />
             ))}
@@ -879,7 +900,14 @@ export default function AdminPage() {
   );
 }
 
-function CompanyCard({ company, gradient, onManageUsers, onDelete }: { company: Company; gradient: string; onManageUsers: () => void; onDelete: () => void }) {
+function CompanyCard({ company, gradient, toggling, onManageUsers, onToggleStatus, onDelete }: {
+  company: Company;
+  gradient: string;
+  toggling: boolean;
+  onManageUsers: () => void;
+  onToggleStatus: () => void;
+  onDelete: () => void;
+}) {
   const initials = company.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 
   return (
@@ -934,8 +962,22 @@ function CompanyCard({ company, gradient, onManageUsers, onDelete }: { company: 
           >
             <Users className="w-3.5 h-3.5" /> Manage Users
           </button>
-          <button className="flex items-center justify-center gap-1.5 text-xs font-medium border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 px-3 py-2 rounded-xl transition-colors">
-            <Settings2 className="w-3.5 h-3.5" />
+          <button
+            onClick={onToggleStatus}
+            disabled={toggling}
+            title={company.status === "suspended" ? "Activate company" : "Suspend company"}
+            className={`flex items-center justify-center gap-1.5 text-xs font-medium px-3 py-2 rounded-xl transition-colors disabled:opacity-50 border ${
+              company.status === "suspended"
+                ? "border-green-200 dark:border-green-800 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20"
+                : "border-amber-200 dark:border-amber-800 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20"
+            }`}
+          >
+            {toggling
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : company.status === "suspended"
+                ? <LockOpen className="w-3.5 h-3.5" />
+                : <Ban className="w-3.5 h-3.5" />
+            }
           </button>
           <button
             onClick={onDelete}
