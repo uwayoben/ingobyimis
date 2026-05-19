@@ -574,12 +574,14 @@ export default function NewLoanPage() {
                   options={FREQ_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
                 />
                 <Input
-                  label="Penalty Rate (%)"
+                  label="Penalty Rate (% / day)"
                   type="number"
-                  step="0.5"
+                  step="any"
                   min="0"
+                  max="100"
                   value={form.penaltyRate}
-                  onChange={(e) => set("penaltyRate", Number(e.target.value))}
+                  onChange={(e) => set("penaltyRate", parseFloat(e.target.value) || 0)}
+                  hint="e.g. 0.33 — supports up to 3 decimal places"
                 />
               </div>
 
