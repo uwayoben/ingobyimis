@@ -4,6 +4,7 @@ export interface InstallmentRow {
   dueDate: Date;
   principalDue: number;
   interestDue: number;
+  managementFeeDue: number;
   totalDue: number;
 }
 
@@ -14,16 +15,21 @@ export function generateSchedule(
   totalInstallments: number,
   firstPaymentDate: Date,
   repaymentFrequencyDays: number,
+  annualMgmtFeeRate: number = 0, // e.g. 12 for 1%/month — charged like interest
 ): InstallmentRow[] {
-  const periodsPerYear = 360 / repaymentFrequencyDays;
-  const periodRate = annualInterestRate / 100 / periodsPerYear;
+  const periodsPerYear     = 360 / repaymentFrequencyDays;
+  const periodRate         = annualInterestRate / 100 / periodsPerYear;
+  const mgmtFeePeriodRate  = annualMgmtFeeRate  / 100 / periodsPerYear;
+  const combinedRate       = periodRate + mgmtFeePeriodRate;
 
   const rows: InstallmentRow[] = [];
 
   if (interestMethod === "flat") {
-    const totalInterest = principal * periodRate * totalInstallments;
-    const principalDue = Math.round(principal / totalInstallments);
-    const interestDue = Math.round(totalInterest / totalInstallments);
+    const totalInterest   = principal * periodRate        * totalInstallments;
+    const totalMgmtFee    = principal * mgmtFeePeriodRate * totalInstallments;
+    const principalDue    = Math.round(principal      / totalInstallments);
+    const interestDue     = Math.round(totalInterest  / totalInstallments);
+    const managementFeeDue = Math.round(totalMgmtFee  / totalInstallments);
 
     for (let i = 0; i < totalInstallments; i++) {
       const due = new Date(firstPaymentDate);
@@ -33,20 +39,21 @@ export function generateSchedule(
         dueDate: due,
         principalDue,
         interestDue,
-        totalDue: principalDue + interestDue,
+        managementFeeDue,
+        totalDue: principalDue + interestDue + managementFeeDue,
       });
     }
   } else {
-    // Declining balance (standard amortization)
-    const payment =
-      periodRate === 0
-        ? Math.round(principal / totalInstallments)
-        : Math.round((principal * periodRate) / (1 - Math.pow(1 + periodRate, -totalInstallments)));
+    // Declining balance — EMI uses combined rate
+    const payment = combinedRate === 0
+      ? Math.round(principal / totalInstallments)
+      : Math.round((principal * combinedRate) / (1 - Math.pow(1 + combinedRate, -totalInstallments)));
 
     let balance = principal;
     for (let i = 0; i < totalInstallments; i++) {
-      const interestDue = Math.round(balance * periodRate);
-      const principalDue = Math.min(payment - interestDue, balance);
+      const interestDue      = Math.round(balance * periodRate);
+      const managementFeeDue = Math.round(balance * mgmtFeePeriodRate);
+      const principalDue     = Math.min(payment - interestDue - managementFeeDue, balance);
       balance -= principalDue;
 
       const due = new Date(firstPaymentDate);
@@ -56,7 +63,8 @@ export function generateSchedule(
         dueDate: due,
         principalDue,
         interestDue,
-        totalDue: principalDue + interestDue,
+        managementFeeDue,
+        totalDue: principalDue + interestDue + managementFeeDue,
       });
     }
   }

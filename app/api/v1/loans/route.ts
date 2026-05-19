@@ -16,6 +16,7 @@ const createSchema = z.object({
   firstPaymentDate:       z.string(),           // ISO date string
   totalInstallments:      z.number().int().positive(),
   penaltyRatePerDay:      z.number().min(0).max(100).default(0),
+  managementFeeRate:      z.number().min(0).max(100).default(0),  // annual %, charged per installment like interest
   collateralType:         z.string().optional(),
   collateralAmount:       z.number().int().optional(),
   eligibleCollateral:     z.number().int().optional(),
@@ -109,21 +110,24 @@ export async function POST(request: Request) {
     if (!parsed.success) return badRequest(parsed.error.issues[0].message);
 
     const d = parsed.data;
-    const firstPaymentDate = new Date(d.firstPaymentDate);
-    const periodsPerYear   = 360 / d.repaymentFrequencyDays;
-    const periodRate       = d.annualInterestRate / 100 / periodsPerYear;
+    const firstPaymentDate   = new Date(d.firstPaymentDate);
+    const periodsPerYear     = 360 / d.repaymentFrequencyDays;
+    const interestPeriodRate = d.annualInterestRate / 100 / periodsPerYear;
+    const mgmtFeePeriodRate  = d.managementFeeRate  / 100 / periodsPerYear;
+    const combinedPeriodRate = interestPeriodRate + mgmtFeePeriodRate;
 
-    // Total repayable
+    // Total repayable — includes principal + interest + management fee
     let totalRepayable: number;
     let nextPaymentAmount: number;
     if (d.interestMethod === "flat") {
-      const totalInterest = d.amount * periodRate * d.totalInstallments;
-      totalRepayable    = Math.round(d.amount + totalInterest);
+      const totalInterest = d.amount * interestPeriodRate * d.totalInstallments;
+      const totalMgmtFee  = d.amount * mgmtFeePeriodRate  * d.totalInstallments;
+      totalRepayable    = Math.round(d.amount + totalInterest + totalMgmtFee);
       nextPaymentAmount = Math.round(totalRepayable / d.totalInstallments);
     } else {
-      const exactEmi = periodRate === 0
+      const exactEmi = combinedPeriodRate === 0
         ? d.amount / d.totalInstallments
-        : (d.amount * periodRate) / (1 - Math.pow(1 + periodRate, -d.totalInstallments));
+        : (d.amount * combinedPeriodRate) / (1 - Math.pow(1 + combinedPeriodRate, -d.totalInstallments));
       nextPaymentAmount = Math.round(exactEmi);
       totalRepayable    = Math.round(exactEmi * d.totalInstallments);
     }
@@ -136,7 +140,7 @@ export async function POST(request: Request) {
     const { loanClass, provisioningRate } = classifyLoan(0);
     const provisionRequired = Math.round(d.amount * provisioningRate / 100);
 
-    // Generate installment schedule
+    // Generate installment schedule (includes management fee per installment)
     const schedule = generateSchedule(
       d.amount,
       d.annualInterestRate,
@@ -144,7 +148,9 @@ export async function POST(request: Request) {
       d.totalInstallments,
       firstPaymentDate,
       d.repaymentFrequencyDays,
+      d.managementFeeRate,
     );
+    const totalMgmtFeeScheduled = schedule.reduce((s, r) => s + r.managementFeeDue, 0);
 
     // Build the custom loan ID: first 2 letters of company name + zero-padded sequence
     const company = await prisma.company.findUnique({
@@ -179,6 +185,8 @@ export async function POST(request: Request) {
           nextPaymentDate:        firstPaymentDate,
           nextPaymentAmount,
           penaltyRatePerDay:      d.penaltyRatePerDay,
+          managementFeeRate:      d.managementFeeRate,
+          totalMgmtFeeScheduled,
           collateralType:         d.collateralType,
           collateralAmount:       d.collateralAmount,
           eligibleCollateral:     d.eligibleCollateral,
@@ -194,12 +202,13 @@ export async function POST(request: Request) {
       // Create installment schedule
       await tx.installment.createMany({
         data: schedule.map((row) => ({
-          loanId:        newLoan.id,
-          installmentNo: row.installmentNo,
-          dueDate:       row.dueDate,
-          principalDue:  row.principalDue,
-          interestDue:   row.interestDue,
-          totalDue:      row.totalDue,
+          loanId:           newLoan.id,
+          installmentNo:    row.installmentNo,
+          dueDate:          row.dueDate,
+          principalDue:     row.principalDue,
+          interestDue:      row.interestDue,
+          managementFeeDue: row.managementFeeDue,
+          totalDue:         row.totalDue,
         })),
       });
 

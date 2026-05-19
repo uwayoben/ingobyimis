@@ -43,22 +43,32 @@ function addPeriods(dateStr: string, n: number, frequency: string): string {
   return d.toISOString().slice(0, 10);
 }
 
-function calcLoan(principal: number, monthlyRate: number, n: number, method: "flat" | "declining") {
+function calcLoan(principal: number, periodRate: number, periodMgmtFeeRate: number, n: number, method: "flat" | "declining") {
   if (principal <= 0 || n <= 0) return null;
-  const r = monthlyRate / 100;
-  let emi = 0, totalInterest = 0; 
+  const r = periodRate       / 100;
+  const m = periodMgmtFeeRate / 100;
+  const combinedRate = r + m;
+  let emi = 0, totalInterest = 0, totalMgmtFee = 0;
   if (method === "flat") {
     totalInterest = principal * r * n;
-    emi = (principal + totalInterest) / n;
+    totalMgmtFee  = principal * m * n;
+    emi = (principal + totalInterest + totalMgmtFee) / n;
   } else {
-    if (r === 0) {
+    if (combinedRate === 0) {
       emi = principal / n;
     } else {
-      emi = (principal * r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
+      emi = (principal * combinedRate * Math.pow(1 + combinedRate, n)) / (Math.pow(1 + combinedRate, n) - 1);
     }
-    totalInterest = emi * n - principal;
+    const totalFees = emi * n - principal;
+    totalInterest   = combinedRate > 0 ? totalFees * (r / combinedRate) : 0;
+    totalMgmtFee    = combinedRate > 0 ? totalFees * (m / combinedRate) : 0;
   }
-  return { emi: Math.round(emi), totalInterest: Math.round(totalInterest), totalRepayable: Math.round(emi * n) };
+  return {
+    emi:           Math.round(emi),
+    totalInterest: Math.round(totalInterest),
+    totalMgmtFee:  Math.round(totalMgmtFee),
+    totalRepayable: Math.round(emi * n),
+  };
 }
 
 const FREQ_OPTIONS = [
@@ -317,11 +327,10 @@ export default function NewLoanPage() {
     penaltyRate:      0,
     // Fees — each has a type (fixed RWF or % of principal) and a value
     applicationFee:     0,
-    applicationFeeType: "fixed"      as "fixed" | "percentage",
+    applicationFeeType: "fixed" as "fixed" | "percentage",
     processingFee:      0,
-    processingFeeType:  "fixed"      as "fixed" | "percentage",
-    managementFee:      0,
-    managementFeeType:  "percentage" as "fixed" | "percentage",
+    processingFeeType:  "fixed" as "fixed" | "percentage",
+    managementFeeRate:  0,   // % per month — charged per installment like interest
     // Schedule
     firstPaymentDate: (() => { const d = new Date(); d.setMonth(d.getMonth() + 1); return d.toISOString().slice(0, 10); })(),
     // Collateral
@@ -345,8 +354,9 @@ export default function NewLoanPage() {
 
   const freqDays = FREQ_OPTIONS.find((o) => o.value === form.frequency)?.days ?? 30;
   // Use the same 30-day-month convention as the API so preview matches saved values
-  const periodRatePct = form.monthlyRate * (freqDays / 30);
-  const calc     = calcLoan(form.principal, periodRatePct, form.installments, form.interestMethod);
+  const periodRatePct        = form.monthlyRate       * (freqDays / 30);
+  const periodMgmtFeeRatePct = form.managementFeeRate * (freqDays / 30);
+  const calc = calcLoan(form.principal, periodRatePct, periodMgmtFeeRatePct, form.installments, form.interestMethod);
   const expectedCompletion = addPeriods(form.firstPaymentDate, form.installments, form.frequency);
 
   const customerAddress = selected
@@ -392,7 +402,6 @@ export default function NewLoanPage() {
     const fees = [];
     if (form.applicationFee > 0) fees.push({ name: "Application Fee", type: form.applicationFeeType, value: form.applicationFee, isRecurring: false });
     if (form.processingFee  > 0) fees.push({ name: "Processing Fee",  type: form.processingFeeType,  value: form.processingFee,  isRecurring: false });
-    if (form.managementFee  > 0) fees.push({ name: "Management Fee",  type: form.managementFeeType,  value: form.managementFee,  isRecurring: false });
 
     try {
       const res = await apiFetch("/api/v1/loans", {
@@ -410,6 +419,7 @@ export default function NewLoanPage() {
           gracePeriodDays:        0,
           firstPaymentDate:       form.firstPaymentDate,
           penaltyRatePerDay:      form.penaltyRate || 0,
+          managementFeeRate:      form.managementFeeRate ? form.managementFeeRate * 12 : 0,
           collateralType:         form.collateralType  || undefined,
           collateralAmount:       form.collateralValue || undefined,
           eligibleCollateral:     form.collateralValue || undefined,
@@ -597,12 +607,20 @@ export default function NewLoanPage() {
                     <div className="px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm font-semibold text-gray-700 dark:text-gray-300">
                       {fmt(calc.emi)}
                     </div>
+                    {calc.totalMgmtFee > 0 && (
+                      <p className="text-[11px] text-purple-600 dark:text-purple-400">
+                        incl. mgmt fee {fmt(Math.round(calc.totalMgmtFee / form.installments))}/installment
+                      </p>
+                    )}
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Total Interest</label>
                     <div className="px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm font-semibold text-gray-700 dark:text-gray-300">
                       {fmt(calc.totalInterest)}
                     </div>
+                    {calc.totalMgmtFee > 0 && (
+                      <p className="text-[11px] text-purple-600 dark:text-purple-400">+ {fmt(calc.totalMgmtFee)} mgmt fee</p>
+                    )}
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Total Repayment</label>
@@ -631,14 +649,21 @@ export default function NewLoanPage() {
                   onTypeChange={(t) => set("processingFeeType", t)}
                   onValueChange={(v) => set("processingFee", v)}
                 />
-                <FeeInput
-                  label="Management Fee"
-                  type={form.managementFeeType}
-                  value={form.managementFee}
-                  principal={form.principal}
-                  onTypeChange={(t) => set("managementFeeType", t)}
-                  onValueChange={(v) => set("managementFee", v)}
-                />
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                    Management Fee Rate (% / month)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={form.managementFeeRate || ""}
+                    onChange={(e) => set("managementFeeRate", parseFloat(e.target.value) || 0)}
+                    placeholder="e.g. 1"
+                    className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                  <p className="text-[11px] text-gray-400">Charged per installment like interest (0 = none)</p>
+                </div>
               </div>
             </Section>
 
@@ -823,13 +848,14 @@ export default function NewLoanPage() {
                   {calc ? (
                     <>
                       {[
-                        { label: "Principal",          value: fmt(form.principal),        bold: false },
-                        { label: "Monthly Rate",       value: `${form.monthlyRate}%`,     bold: false },
-                        { label: "Annual Rate (equiv)", value: `${form.monthlyRate * 12}%`, bold: false },
-                        { label: "Interest Method",    value: form.interestMethod === "declining" ? "Declining" : "Flat", bold: false },
-                        { label: "Installment Amount", value: fmt(calc.emi),              bold: true },
-                        { label: "Total Interest",     value: fmt(calc.totalInterest),    bold: false },
-                        { label: "Total Repayable",    value: fmt(calc.totalRepayable),   bold: true },
+                        { label: "Principal",           value: fmt(form.principal),            bold: false },
+                        { label: "Interest Rate",       value: `${form.monthlyRate}%/month`,   bold: false },
+                        ...(form.managementFeeRate > 0 ? [{ label: "Mgmt Fee Rate", value: `${form.managementFeeRate}%/month`, bold: false }] : []),
+                        { label: "Interest Method",     value: form.interestMethod === "declining" ? "Declining" : "Flat", bold: false },
+                        { label: "Installment (EMI)",   value: fmt(calc.emi),                  bold: true },
+                        { label: "Total Interest",      value: fmt(calc.totalInterest),        bold: false },
+                        ...(calc.totalMgmtFee > 0 ? [{ label: "Total Mgmt Fee", value: fmt(calc.totalMgmtFee), bold: false }] : []),
+                        { label: "Total Repayable",     value: fmt(calc.totalRepayable),       bold: true },
                       ].map((r) => (
                         <div key={r.label} className={`flex justify-between text-xs ${r.bold ? "border-t border-gray-100 dark:border-gray-800 pt-2 mt-1" : ""}`}>
                           <span className="text-gray-500 dark:text-gray-400">{r.label}</span>
@@ -846,16 +872,15 @@ export default function NewLoanPage() {
                         </p>
                       </div>
 
-                      {(form.applicationFee > 0 || form.processingFee > 0 || form.managementFee > 0) && (() => {
+                      {(form.applicationFee > 0 || form.processingFee > 0) && (() => {
                         const feeAmt = (type: "fixed" | "percentage", val: number) =>
                           type === "fixed" ? val : Math.round(form.principal * val / 100);
                         const totalFees =
                           feeAmt(form.applicationFeeType, form.applicationFee) +
-                          feeAmt(form.processingFeeType,  form.processingFee)  +
-                          feeAmt(form.managementFeeType,  form.managementFee);
+                          feeAmt(form.processingFeeType,  form.processingFee);
                         return (
                           <div className="pt-2 border-t border-gray-100 dark:border-gray-800 space-y-1.5">
-                            <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Fees</p>
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">One-time Fees</p>
                             {form.applicationFee > 0 && (
                               <div className="flex justify-between text-xs">
                                 <span className="text-gray-500">Application{form.applicationFeeType === "percentage" ? ` (${form.applicationFee}%)` : ""}</span>
@@ -868,14 +893,8 @@ export default function NewLoanPage() {
                                 <span className="font-medium text-gray-700 dark:text-gray-300">{fmt(feeAmt(form.processingFeeType, form.processingFee))}</span>
                               </div>
                             )}
-                            {form.managementFee > 0 && (
-                              <div className="flex justify-between text-xs">
-                                <span className="text-gray-500">Management{form.managementFeeType === "percentage" ? ` (${form.managementFee}%)` : ""}</span>
-                                <span className="font-medium text-gray-700 dark:text-gray-300">{fmt(feeAmt(form.managementFeeType, form.managementFee))}</span>
-                              </div>
-                            )}
                             <div className="flex justify-between text-xs border-t border-gray-100 dark:border-gray-800 pt-1.5 font-semibold">
-                              <span className="text-gray-600 dark:text-gray-400">Total Fees</span>
+                              <span className="text-gray-600 dark:text-gray-400">Total One-time Fees</span>
                               <span className="text-gray-900 dark:text-gray-100">{fmt(totalFees)}</span>
                             </div>
                           </div>

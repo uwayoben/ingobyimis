@@ -28,11 +28,16 @@ function loanPeriodRate(loan: Loan): number {
 }
 
 function interestRemaining(loan: Loan): number {
-  return Math.max(0, (loan.totalRepayable - loan.amount) - loan.amountRepaidInterest);
+  const totalMgmtFeeScheduled = loan.totalMgmtFeeScheduled ?? 0;
+  return Math.max(0, (loan.totalRepayable - loan.amount - totalMgmtFeeScheduled) - loan.amountRepaidInterest);
+}
+
+function mgmtFeeRemaining(loan: Loan): number {
+  return Math.max(0, (loan.totalMgmtFeeScheduled ?? 0) - (loan.amountRepaidMgmtFee ?? 0));
 }
 
 function trueOutstanding(loan: Loan): number {
-  return loan.balanceOutstanding + interestRemaining(loan) + loan.penaltyAmount;
+  return loan.balanceOutstanding + interestRemaining(loan) + mgmtFeeRemaining(loan) + loan.penaltyAmount;
 }
 
 const INSTALLMENT_STATUS_COLOR: Record<string, string> = {
@@ -96,20 +101,29 @@ function RecordPaymentForm({
   const penalty      = loan.penaltyAmount;
   const totalOuts    = trueOutstanding(loan);
   const amt          = Math.min(Number(amount) || 0, totalOuts);
-  const penaltyPaid  = Math.min(amt, penalty);
-  const afterPenalty = amt - penaltyPaid;
-  // Interest allocation preview: per-period for declining, capped at remaining scheduled interest
-  const periodsPerYear    = 360 / loan.repaymentFrequencyDays;
-  const periodRate        = Number(loan.annualInterestRate) / 100 / periodsPerYear;
-  const remainingInt      = Math.max(0, (loan.totalRepayable - loan.amount) - loan.amountRepaidInterest);
-  const periodInterest    = loan.balanceOutstanding > 0
-    ? Math.round(loan.balanceOutstanding * periodRate)
-    : remainingInt;
-  const currentInt        = Math.min(periodInterest, remainingInt);
-  const maxInt            = remainingInt;
-  const isPayoffPreview   = amt >= (penalty + maxInt + loan.balanceOutstanding);
-  const interest          = Math.min(afterPenalty, isPayoffPreview ? maxInt : currentInt);
-  const principal         = afterPenalty - interest;
+
+  const periodsPerYear   = 360 / loan.repaymentFrequencyDays;
+  const periodRate       = Number(loan.annualInterestRate)     / 100 / periodsPerYear;
+  const mgmtFeePeriodRate = Number(loan.managementFeeRate ?? 0) / 100 / periodsPerYear;
+
+  const totalMgmtFeeScheduled = loan.totalMgmtFeeScheduled ?? 0;
+  const remainingMgmtFee      = mgmtFeeRemaining(loan);
+  const periodMgmtFee         = loan.balanceOutstanding > 0
+    ? Math.round(loan.balanceOutstanding * mgmtFeePeriodRate) : remainingMgmtFee;
+  const currentMgmtFee = Math.min(periodMgmtFee, remainingMgmtFee);
+
+  const remainingInt   = interestRemaining(loan);
+  const periodInterest = loan.balanceOutstanding > 0
+    ? Math.round(loan.balanceOutstanding * periodRate) : remainingInt;
+  const currentInt     = Math.min(periodInterest, remainingInt);
+
+  const isPayoffPreview = amt >= (penalty + remainingMgmtFee + remainingInt + loan.balanceOutstanding);
+
+  let remaining0      = amt;
+  const penaltyPaid   = Math.min(remaining0, penalty);        remaining0 -= penaltyPaid;
+  const mgmtFeePreview = Math.min(remaining0, isPayoffPreview ? remainingMgmtFee : currentMgmtFee); remaining0 -= mgmtFeePreview;
+  const interest      = Math.min(remaining0, isPayoffPreview ? remainingInt : currentInt);          remaining0 -= interest;
+  const principal     = remaining0;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -185,10 +199,16 @@ function RecordPaymentForm({
           <span className="text-gray-500">Principal Outstanding</span>
           <span className="font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(loan.balanceOutstanding)}</span>
         </div>
+        {remainingMgmtFee > 0 && (
+          <div className="flex justify-between">
+            <span className="text-purple-500 dark:text-purple-400">Management Fee Remaining</span>
+            <span className="font-semibold text-purple-600 dark:text-purple-400">{formatCurrency(remainingMgmtFee)}</span>
+          </div>
+        )}
         <div className="flex justify-between">
           <span className="text-gray-500">Interest Remaining</span>
-          <span className={cn("font-semibold", interestRemaining(loan) > 0 ? "text-amber-600 dark:text-amber-400" : "text-gray-400")}>
-            {formatCurrency(interestRemaining(loan))}
+          <span className={cn("font-semibold", remainingInt > 0 ? "text-amber-600 dark:text-amber-400" : "text-gray-400")}>
+            {formatCurrency(remainingInt)}
           </span>
         </div>
         <div className="flex justify-between">
@@ -220,6 +240,12 @@ function RecordPaymentForm({
             <div className="flex justify-between">
               <span className="text-gray-500">→ Penalty</span>
               <span className="font-bold text-red-600 dark:text-red-400">{formatCurrency(penaltyPaid)}</span>
+            </div>
+          )}
+          {mgmtFeePreview > 0 && (
+            <div className="flex justify-between">
+              <span className="text-gray-500">→ Management Fee</span>
+              <span className="font-semibold text-purple-600 dark:text-purple-400">{formatCurrency(mgmtFeePreview)}</span>
             </div>
           )}
           <div className="flex justify-between">
@@ -944,6 +970,12 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                 <span className="text-gray-500">Principal Outstanding</span>
                 <span className="font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(loan.balanceOutstanding)}</span>
               </div>
+              {mgmtFeeRemaining(loan) > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-purple-500 dark:text-purple-400">Management Fee Remaining</span>
+                  <span className="font-semibold text-purple-600 dark:text-purple-400">{formatCurrency(mgmtFeeRemaining(loan))}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-gray-500">
                   {loan.interestMethod === "flat" ? "Interest Remaining" : "Interest (this period)"}
@@ -1022,7 +1054,8 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                     { label: "Customer",       value: loan.customer?.names ?? loan.customerName },
                     { label: "Loan Officer",   value: loan.loanOfficer?.name ?? "—" },
                     { label: "Purpose",        value: loan.purpose },
-                    { label: "Interest Rate",  value: `${loan.annualInterestRate / 12}%/month (${loan.interestMethod})` },
+                    { label: "Interest Rate",     value: `${loan.annualInterestRate / 12}%/month (${loan.interestMethod})` },
+                    ...(loan.managementFeeRate > 0 ? [{ label: "Mgmt Fee Rate", value: `${loan.managementFeeRate / 12}%/month (per installment)` }] : []),
                     { label: "Repayment",      value: `${loan.repaymentFrequencyDays === 30 ? "Monthly" : loan.repaymentFrequencyDays === 7 ? "Weekly" : loan.repaymentFrequencyDays === 14 ? "Bi-weekly" : `Every ${loan.repaymentFrequencyDays}d`} · ${loan.totalInstallments} installments` },
                     { label: "First Payment",  value: loan.firstPaymentDate ? formatDate(loan.firstPaymentDate) : "—" },
                     { label: "Maturity Date",  value: formatDate(loan.agreedMaturityDate) },
@@ -1186,47 +1219,58 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
               </div>
             </CardHeader>
             <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50">
-                    {["#", "Due Date", "Principal", "Interest", "Total Due", "Paid", "Status"].map((h) => (
-                      <th key={h} className="text-left text-xs font-medium text-gray-500 px-4 py-3">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                  {installments.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-400 dark:text-gray-500">
-                        No installment schedule found for this loan.
-                      </td>
-                    </tr>
-                  ) : installments.map((row) => (
-                    <tr
-                      key={row.id}
-                      className={cn(
-                        "text-xs transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50",
-                        row.status === "paid"    ? "bg-emerald-50/40 dark:bg-emerald-900/5" :
-                        row.status === "overdue" ? "bg-red-50/40 dark:bg-red-900/5" : ""
-                      )}
-                    >
-                      <td className="px-4 py-2.5 font-medium text-gray-900 dark:text-gray-100">{row.installmentNo}</td>
-                      <td className="px-4 py-2.5 text-gray-600 dark:text-gray-400">{formatDate(row.dueDate)}</td>
-                      <td className="px-4 py-2.5 text-green-600 dark:text-green-400 font-medium">{formatCurrency(row.principalDue)}</td>
-                      <td className="px-4 py-2.5 text-amber-600 dark:text-amber-400">{formatCurrency(row.interestDue)}</td>
-                      <td className="px-4 py-2.5 font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(row.totalDue)}</td>
-                      <td className="px-4 py-2.5 text-gray-600 dark:text-gray-400">
-                        {row.amountPaid > 0 ? formatCurrency(row.amountPaid) : <span className="text-gray-300 dark:text-gray-600">—</span>}
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <span className={cn("inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold capitalize", INSTALLMENT_STATUS_COLOR[row.status])}>
-                          {row.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              {(() => {
+                const hasMgmtFee = loan.managementFeeRate > 0;
+                const headers = hasMgmtFee
+                  ? ["#", "Due Date", "Principal", "Mgmt Fee", "Interest", "Total Due", "Paid", "Status"]
+                  : ["#", "Due Date", "Principal", "Interest", "Total Due", "Paid", "Status"];
+                return (
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50">
+                        {headers.map((h) => (
+                          <th key={h} className="text-left text-xs font-medium text-gray-500 px-4 py-3">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                      {installments.length === 0 ? (
+                        <tr>
+                          <td colSpan={headers.length} className="px-4 py-10 text-center text-sm text-gray-400 dark:text-gray-500">
+                            No installment schedule found for this loan.
+                          </td>
+                        </tr>
+                      ) : installments.map((row) => (
+                        <tr
+                          key={row.id}
+                          className={cn(
+                            "text-xs transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50",
+                            row.status === "paid"    ? "bg-emerald-50/40 dark:bg-emerald-900/5" :
+                            row.status === "overdue" ? "bg-red-50/40 dark:bg-red-900/5" : ""
+                          )}
+                        >
+                          <td className="px-4 py-2.5 font-medium text-gray-900 dark:text-gray-100">{row.installmentNo}</td>
+                          <td className="px-4 py-2.5 text-gray-600 dark:text-gray-400">{formatDate(row.dueDate)}</td>
+                          <td className="px-4 py-2.5 text-green-600 dark:text-green-400 font-medium">{formatCurrency(row.principalDue)}</td>
+                          {hasMgmtFee && (
+                            <td className="px-4 py-2.5 text-purple-600 dark:text-purple-400">{formatCurrency(row.managementFeeDue)}</td>
+                          )}
+                          <td className="px-4 py-2.5 text-amber-600 dark:text-amber-400">{formatCurrency(row.interestDue)}</td>
+                          <td className="px-4 py-2.5 font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(row.totalDue)}</td>
+                          <td className="px-4 py-2.5 text-gray-600 dark:text-gray-400">
+                            {row.amountPaid > 0 ? formatCurrency(row.amountPaid) : <span className="text-gray-300 dark:text-gray-600">—</span>}
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <span className={cn("inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold capitalize", INSTALLMENT_STATUS_COLOR[row.status])}>
+                              {row.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                );
+              })()}
             </div>
           </Card>
         </motion.div>
@@ -1258,7 +1302,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50">
-                      {["Reference", "Date", "Total", "Principal", "Interest", "Penalty", "Method", "Recorded By", "Receipt"].map((h) => (
+                      {["Reference", "Date", "Total", "Principal", "Mgmt Fee", "Interest", "Penalty", "Method", "Recorded By", "Receipt"].map((h) => (
                         <th key={h} className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 px-4 py-3 first:pl-6">{h}</th>
                       ))}
                     </tr>
@@ -1280,6 +1324,11 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                           <td className="px-4 py-3 text-gray-500 dark:text-gray-400">{formatDate(p.date)}</td>
                           <td className="px-4 py-3 font-bold text-gray-900 dark:text-gray-100">{formatCurrency(p.amount)}</td>
                           <td className="px-4 py-3 font-semibold text-green-600 dark:text-green-400">{formatCurrency(p.principal)}</td>
+                          <td className="px-4 py-3">
+                            {(p.managementFee ?? 0) > 0
+                              ? <span className="font-semibold text-purple-600 dark:text-purple-400">{formatCurrency(p.managementFee)}</span>
+                              : <span className="text-gray-300 dark:text-gray-600">—</span>}
+                          </td>
                           <td className="px-4 py-3 font-semibold text-amber-600 dark:text-amber-400">{formatCurrency(p.interest)}</td>
                           <td className="px-4 py-3">
                             {p.penalty > 0
@@ -1313,6 +1362,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                       <td colSpan={2} className="pl-6 pr-4 py-3 text-gray-600 dark:text-gray-400">Totals</td>
                       <td className="px-4 py-3 text-gray-900 dark:text-gray-100">{formatCurrency(payments.reduce((s,p)=>s+p.amount,0))}</td>
                       <td className="px-4 py-3 text-green-600 dark:text-green-400">{formatCurrency(payments.reduce((s,p)=>s+p.principal,0))}</td>
+                      <td className="px-4 py-3 text-purple-600 dark:text-purple-400">{formatCurrency(payments.reduce((s,p)=>s+(p.managementFee??0),0))}</td>
                       <td className="px-4 py-3 text-amber-600 dark:text-amber-400">{formatCurrency(payments.reduce((s,p)=>s+p.interest,0))}</td>
                       <td className="px-4 py-3 text-red-600 dark:text-red-400">{formatCurrency(payments.reduce((s,p)=>s+p.penalty,0))}</td>
                       <td colSpan={3} />

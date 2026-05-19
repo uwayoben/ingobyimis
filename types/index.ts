@@ -94,6 +94,7 @@ export interface Installment {
   dueDate: string;
   principalDue: number;
   interestDue: number;
+  managementFeeDue: number;
   totalDue: number;
   amountPaid: number;
   paidDate: string | null;
@@ -125,7 +126,10 @@ export interface Loan {
   totalRepayable: number;
   amountRepaidPrincipal: number;
   amountRepaidInterest: number;
+  amountRepaidMgmtFee: number;
   balanceOutstanding: number;
+  managementFeeRate: number;
+  totalMgmtFeeScheduled: number;
   arrearsStartDate?: string;
   daysOverdue: number;
   lastPaymentDate?: string;
@@ -165,6 +169,7 @@ export interface Payment {
   recordedByName?: string;
   amount: number;
   penalty: number;
+  managementFee: number;
   interest: number;
   principal: number;
   date: string;

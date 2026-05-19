@@ -148,6 +148,9 @@ function mockLoan(o: {
     penaltyPaid: 0,
     penaltyWaived: 0,
     penaltyRatePerDay: 0,
+    managementFeeRate: 0,
+    totalMgmtFeeScheduled: 0,
+    amountRepaidMgmtFee: 0,
     updatedAt: o.createdAt,
   };
 }
@@ -235,31 +238,31 @@ export const LOANS: Loan[] = [
 export const PAYMENTS: Payment[] = [
   {
     id: "p1", loanId: "l001", customerId: "cust1", customerName: "Marie Uwase",
-    amount: 95_833, penalty: 0, interest: 22_500, principal: 73_333,
+    amount: 95_833, penalty: 0, managementFee: 0, interest: 22_500, principal: 73_333,
     date: "2024-09-05", method: "mobile_money", reference: "MM-2024-09-001",
     recordedById: "u4", companyId: "c1",
   },
   {
     id: "p2", loanId: "l002", customerId: "cust2", customerName: "Patrick Nzabonimpa",
-    amount: 132_000, penalty: 12_000, interest: 45_000, principal: 75_000,
+    amount: 132_000, penalty: 12_000, managementFee: 0, interest: 45_000, principal: 75_000,
     date: "2024-09-15", method: "bank_transfer", reference: "BT-2024-09-002",
     recordedById: "u4", companyId: "c1", notes: "Late payment - penalty applied",
   },
   {
     id: "p3", loanId: "l003", customerId: "cust3", customerName: "Claudine Mukamazimpaka",
-    amount: 158_000, penalty: 0, interest: 52_800, principal: 105_200,
+    amount: 158_000, penalty: 0, managementFee: 0, interest: 52_800, principal: 105_200,
     date: "2024-09-05", method: "cash", reference: "CASH-2024-09-003",
     recordedById: "u4", companyId: "c1",
   },
   {
     id: "p4", loanId: "l001", customerId: "cust1", customerName: "Marie Uwase",
-    amount: 95_833, penalty: 0, interest: 20_667, principal: 75_166,
+    amount: 95_833, penalty: 0, managementFee: 0, interest: 20_667, principal: 75_166,
     date: "2024-08-05", method: "mobile_money", reference: "MM-2024-08-001",
     recordedById: "u4", companyId: "c1",
   },
   {
     id: "p5", loanId: "l003", customerId: "cust3", customerName: "Claudine Mukamazimpaka",
-    amount: 158_000, penalty: 0, interest: 50_050, principal: 107_950,
+    amount: 158_000, penalty: 0, managementFee: 0, interest: 50_050, principal: 107_950,
     date: "2024-08-05", method: "cash", reference: "CASH-2024-08-004",
     recordedById: "u2", companyId: "c1",
   },

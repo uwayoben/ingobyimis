@@ -96,53 +96,72 @@ export async function POST(request: Request) {
     const { amount, loanId, method, reference, notes, date, receiptUrl } = parsed.data;
     const paymentDate = date ? new Date(date) : new Date();
 
-    // Auto-allocate: penalty → interest → principal
+    // Auto-allocate waterfall: penalty → management fee → interest → principal
     let remaining     = amount;
     const penaltyPaid = Math.min(remaining, loan.penaltyAmount);
     remaining        -= penaltyPaid;
 
-    const periodsPerYear = 360 / loan.repaymentFrequencyDays;
-    const periodRate     = Number(loan.annualInterestRate) / 100 / periodsPerYear;
+    const periodsPerYear     = 360 / loan.repaymentFrequencyDays;
+    const periodRate         = Number(loan.annualInterestRate)    / 100 / periodsPerYear;
+    const mgmtFeePeriodRate  = Number(loan.managementFeeRate ?? 0) / 100 / periodsPerYear;
 
-    // Both methods track total scheduled interest. For flat: fixed on original principal.
-    // For declining: sum of per-period interest across all installments (stored in totalRepayable).
-    const totalScheduledInterest = loan.totalRepayable - loan.amount;
+    // Management fee tracking
+    const totalMgmtFeeScheduled = loan.totalMgmtFeeScheduled ?? 0;
+    const remainingMgmtFee      = Math.max(0, totalMgmtFeeScheduled - (loan.amountRepaidMgmtFee ?? 0));
+
+    let currentMgmtFee: number;
+    if (loan.interestMethod === "flat") {
+      currentMgmtFee = Math.min(Math.round(loan.amount * mgmtFeePeriodRate), remainingMgmtFee);
+    } else {
+      const periodMgmtFee = loan.balanceOutstanding > 0
+        ? Math.round(loan.balanceOutstanding * mgmtFeePeriodRate)
+        : remainingMgmtFee;
+      currentMgmtFee = Math.min(periodMgmtFee, remainingMgmtFee);
+    }
+
+    // Interest tracking — totalRepayable already excludes management fee so subtract it back
+    const totalScheduledInterest = loan.totalRepayable - loan.amount - totalMgmtFeeScheduled;
     const remainingInterest      = Math.max(0, totalScheduledInterest - loan.amountRepaidInterest);
 
     let currentInterest: number;
     if (loan.interestMethod === "flat") {
-      const perPeriodInterest = Math.round(loan.amount * periodRate);
-      currentInterest = Math.min(perPeriodInterest, remainingInterest);
+      currentInterest = Math.min(Math.round(loan.amount * periodRate), remainingInterest);
     } else {
-      // Per-period interest on remaining balance; when balance is 0 allow any amount toward interest.
       const periodInterest = loan.balanceOutstanding > 0
         ? Math.round(loan.balanceOutstanding * periodRate)
         : remainingInterest;
       currentInterest = Math.min(periodInterest, remainingInterest);
     }
-    const maxInterest = remainingInterest;
 
-    // When the payment covers all remaining (balance + all interest + penalty), credit all interest
-    // so the loan can close — applies to both flat and declining balance.
-    const isPayoff = amount >= (loan.penaltyAmount + maxInterest + loan.balanceOutstanding);
-    const interestToCredit = isPayoff ? maxInterest : currentInterest;
-    const interest  = Math.min(remaining, interestToCredit);
-    remaining      -= interest;
-    const principal = Math.min(remaining, loan.balanceOutstanding);
-
-    const maxPayable = loan.penaltyAmount + maxInterest + loan.balanceOutstanding;
+    const maxPayable = loan.penaltyAmount + remainingMgmtFee + remainingInterest + loan.balanceOutstanding;
     if (amount > maxPayable) {
       return badRequest(`Amount exceeds total owed. Maximum payment is RWF ${maxPayable.toLocaleString()}.`);
     }
 
+    const isPayoff = amount >= maxPayable;
+
+    // Management fee
+    const mgmtFeeToCredit = isPayoff ? remainingMgmtFee : currentMgmtFee;
+    const mgmtFeePaid = Math.min(remaining, mgmtFeeToCredit);
+    remaining        -= mgmtFeePaid;
+
+    // Interest
+    const interestToCredit = isPayoff ? remainingInterest : currentInterest;
+    const interest  = Math.min(remaining, interestToCredit);
+    remaining      -= interest;
+
+    // Principal
+    const principal = Math.min(remaining, loan.balanceOutstanding);
+
     const newBalance         = Math.max(0, loan.balanceOutstanding - principal);
     const newPrincipalRepaid = loan.amountRepaidPrincipal + principal;
     const newInterestRepaid  = loan.amountRepaidInterest  + interest;
+    const newMgmtFeeRepaid   = (loan.amountRepaidMgmtFee ?? 0) + mgmtFeePaid;
     const newPenaltyAmount   = loan.penaltyAmount - penaltyPaid;
 
-    // Both flat and declining require all scheduled interest to be paid before closing.
     const remainingInterestAfter = Math.max(0, totalScheduledInterest - newInterestRepaid);
-    const isFullyPaid = newBalance === 0 && newPenaltyAmount === 0 && remainingInterestAfter === 0;
+    const remainingMgmtFeeAfter  = Math.max(0, totalMgmtFeeScheduled  - newMgmtFeeRepaid);
+    const isFullyPaid = newBalance === 0 && newPenaltyAmount === 0 && remainingInterestAfter === 0 && remainingMgmtFeeAfter === 0;
 
     // Classification is determined inside the transaction after we know which
     // installments remain overdue post-payment (computed below).
@@ -175,7 +194,8 @@ export async function POST(request: Request) {
           loanId,
           customerId: loan.customerId,
           amount,
-          penalty:     penaltyPaid,
+          penalty:       penaltyPaid,
+          managementFee: mgmtFeePaid,
           interest,
           principal,
           date:        paymentDate,
@@ -250,6 +270,7 @@ export async function POST(request: Request) {
         data: {
           amountRepaidPrincipal: newPrincipalRepaid,
           amountRepaidInterest:  newInterestRepaid,
+          amountRepaidMgmtFee:   newMgmtFeeRepaid,
           balanceOutstanding:    newBalance,
           penaltyAmount:         newPenaltyAmount,
           penaltyPaid:           { increment: penaltyPaid },

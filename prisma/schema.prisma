@@ -231,6 +231,9 @@ model Loan {
   penaltyWaivedAt           DateTime?
   penaltyRatePerDay         Decimal          @db.Decimal(5,3) @default(0)   // % of overdue installment per day
   lastPenaltyCalculatedAt   DateTime?                                        // last time auto-penalty was applied
+  managementFeeRate         Decimal          @db.Decimal(5,3) @default(0)   // % per period, charged like interest
+  totalMgmtFeeScheduled     Int              @default(0)                     // total management fee across all installments
+  amountRepaidMgmtFee       Int              @default(0)                     // management fee collected so far
 
   // Collateral
   collateralType          String?
@@ -270,9 +273,10 @@ model Installment {
   loan           Loan              @relation(fields: [loanId], references: [id], onDelete: Cascade)
   installmentNo  Int
   dueDate        DateTime
-  principalDue   Int
-  interestDue    Int
-  totalDue       Int
+  principalDue      Int
+  interestDue       Int
+  managementFeeDue  Int               @default(0)
+  totalDue          Int
   amountPaid     Int               @default(0)
   paidDate       DateTime?
   status         InstallmentStatus @default(pending)
@@ -307,10 +311,11 @@ model Payment {
   loan         Loan          @relation(fields: [loanId], references: [id])
   customerId   String
   customer     Customer      @relation(fields: [customerId], references: [id])
-  amount       Int
-  penalty      Int           @default(0)
-  interest     Int
-  principal    Int
+  amount         Int
+  penalty        Int           @default(0)
+  managementFee  Int           @default(0)
+  interest       Int
+  principal      Int
   date         DateTime
   method       PaymentMethod
   reference    String        @unique
