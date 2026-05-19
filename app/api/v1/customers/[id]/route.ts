@@ -90,7 +90,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
         id,
         ...(auth.role !== "super_admin" ? { companyId: auth.companyId! } : {}),
       },
-      include: { _count: { select: { loans: true } } },
+      include: { _count: { select: { loans: true, payments: true } } },
     });
 
     if (!customer) return notFound("Customer not found.");
@@ -98,6 +98,12 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
     if (customer._count.loans > 0) {
       return badRequest(
         `Cannot delete — this customer has ${customer._count.loans} loan record(s). Remove all associated loans first.`
+      );
+    }
+
+    if (customer._count.payments > 0) {
+      return badRequest(
+        `Cannot delete — this customer has ${customer._count.payments} payment record(s). Remove all associated loans and payments first.`
       );
     }
 
