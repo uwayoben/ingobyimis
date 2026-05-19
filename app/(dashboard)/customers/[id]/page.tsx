@@ -22,6 +22,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Loan calculator state
   const [calcOpen, setCalcOpen] = useState(false);
@@ -55,19 +56,20 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
 
   async function handleDelete() {
     setDeleting(true);
+    setDeleteError(null);
     try {
       const res = await apiFetch(`/api/v1/customers/${id}`, { method: "DELETE" });
       const json = await res.json();
       if (!res.ok) {
-        alert(json.error ?? "Failed to delete customer.");
+        setDeleteError(json.error ?? "Failed to delete customer.");
         return;
       }
+      setConfirmDelete(false);
       router.push("/customers");
     } catch {
-      alert("Failed to delete customer.");
+      setDeleteError("Network error — please try again.");
     } finally {
       setDeleting(false);
-      setConfirmDelete(false);
     }
   }
 
@@ -118,7 +120,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
         <RoleGate roles={["super_admin", "managing_director"]}>
           <button
             type="button"
-            onClick={() => setConfirmDelete(true)}
+            onClick={() => { setDeleteError(null); setConfirmDelete(true); }}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-red-600 border border-red-200 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-900/20 transition-colors"
           >
             <Trash2 className="w-3.5 h-3.5" />
@@ -450,13 +452,18 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                 <p className="text-sm text-gray-500 dark:text-gray-400">This action cannot be undone.</p>
               </div>
             </div>
-            <p className="text-sm text-gray-600 dark:text-gray-300 mb-5">
+            <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
               Are you sure you want to delete <span className="font-semibold">{customer.names}</span>? All associated data will be permanently removed.
             </p>
+            {deleteError && (
+              <div className="mb-4 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 px-3 py-2 text-sm text-red-700 dark:text-red-400">
+                {deleteError}
+              </div>
+            )}
             <div className="flex gap-3 justify-end">
               <button
                 type="button"
-                onClick={() => setConfirmDelete(false)}
+                onClick={() => { setConfirmDelete(false); setDeleteError(null); }}
                 disabled={deleting}
                 className="px-4 py-2 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
               >
