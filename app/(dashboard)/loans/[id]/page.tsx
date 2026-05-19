@@ -84,6 +84,7 @@ function RecordPaymentForm({
   onSaved: () => void;
 }) {
   const [amount, setAmount]           = useState("");
+  const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [method, setMethod]           = useState("cash");
   const [reference, setReference]     = useState("");
   const [notes, setNotes]             = useState("");
@@ -143,7 +144,7 @@ function RecordPaymentForm({
       const res = await apiFetch("/api/v1/payments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ loanId: loan.id, amount: parsed, method, reference, notes: notes || undefined, receiptUrl }),
+        body: JSON.stringify({ loanId: loan.id, amount: parsed, date: paymentDate, method, reference, notes: notes || undefined, receiptUrl }),
       });
       const json = await res.json();
       if (!res.ok) { setError(json.error || "Failed to record payment."); return; }
@@ -231,6 +232,15 @@ function RecordPaymentForm({
           </div>
         </div>
       )}
+
+      <Input
+        label="Payment Date"
+        type="date"
+        value={paymentDate}
+        onChange={(e) => setPaymentDate(e.target.value)}
+        required
+        hint="Backdate if recording a delayed payment"
+      />
 
       <div className="grid grid-cols-2 gap-4">
         <Select
