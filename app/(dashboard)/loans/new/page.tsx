@@ -309,12 +309,12 @@ export default function NewLoanPage() {
     loanNumber:       generateLoanNumber(),
     customerId:       "",
     // Terms
-    principal:        1_000_000,
-    monthlyRate:      5,
+    principal:        0,
+    monthlyRate:      0,
     interestMethod:   "declining" as "flat" | "declining",
     frequency:        "monthly",
-    installments:     12,
-    penaltyRate:      2.5,
+    installments:     0,
+    penaltyRate:      0,
     // Fees — each has a type (fixed RWF or % of principal) and a value
     applicationFee:     0,
     applicationFeeType: "fixed"      as "fixed" | "percentage",
@@ -533,7 +533,8 @@ export default function NewLoanPage() {
                   label="Principal Amount (RWF)"
                   type="number"
                   min="1"
-                  value={form.principal}
+                  placeholder="e.g. 1,000,000"
+                  value={form.principal || ""}
                   onChange={(e) => set("principal", Number(e.target.value))}
                   required
                 />
@@ -543,7 +544,8 @@ export default function NewLoanPage() {
                   step="0.1"
                   min="0"
                   max="100"
-                  value={form.monthlyRate}
+                  placeholder="e.g. 5"
+                  value={form.monthlyRate || ""}
                   onChange={(e) => set("monthlyRate", Number(e.target.value))}
                   required
                 />
@@ -563,7 +565,8 @@ export default function NewLoanPage() {
                   label="No. of Installments"
                   type="number"
                   min="1"
-                  value={form.installments}
+                  placeholder="e.g. 12"
+                  value={form.installments || ""}
                   onChange={(e) => set("installments", Number(e.target.value))}
                   required
                 />
@@ -579,9 +582,10 @@ export default function NewLoanPage() {
                   step="any"
                   min="0"
                   max="100"
-                  value={form.penaltyRate}
+                  placeholder="e.g. 0.33"
+                  value={form.penaltyRate || ""}
                   onChange={(e) => set("penaltyRate", parseFloat(e.target.value) || 0)}
-                  hint="e.g. 0.33 — supports up to 3 decimal places"
+                  hint="Supports up to 3 decimal places"
                 />
               </div>
 
