@@ -57,18 +57,19 @@ function buildSchedule(
     const due = new Date(base);
     due.setDate(due.getDate() + (i - 1) * freqDays);
 
+    const isLast = i === installments;
     let interest: number;
     let princ: number;
 
     if (method === "flat") {
       interest = Math.round((principal * periodRate * installments) / installments);
-      princ    = Math.round(principal / installments);
+      princ    = isLast ? balance : Math.round(principal / installments);
     } else {
       interest = Math.round(balance * periodRate);
-      princ    = Math.min(Math.round(emi - interest), balance);
+      princ    = isLast ? balance : Math.min(Math.round(emi - interest), balance);
     }
 
-    const closing = Math.max(0, balance - princ);
+    const closing = isLast ? 0 : Math.max(0, balance - princ);
 
     rows.push({
       no: i,
@@ -88,7 +89,7 @@ function buildSchedule(
 
 export default function LoanCalculatorPage() {
   const [principal,   setPrincipal]   = useState(1_000_000);
-  const [monthlyRate, setMonthlyRate] = useState(5);
+  const [monthlyRate, setMonthlyRate] = useState("5");
   const [method,      setMethod]      = useState<"flat" | "declining">("declining");
   const [installments, setInstallments] = useState(12);
   const [freqKey,     setFreqKey]     = useState("30");
@@ -99,7 +100,7 @@ export default function LoanCalculatorPage() {
   });
 
   const freq      = FREQ_OPTIONS.find((o) => o.value === freqKey)!;
-  const annualRate = monthlyRate * 12;
+  const annualRate = (parseFloat(monthlyRate) || 0) * 12;
   const schedule  = useMemo(
     () => buildSchedule(principal, annualRate, method, installments, freq.days, startDate),
     [principal, annualRate, method, installments, freq.days, startDate],
@@ -111,7 +112,7 @@ export default function LoanCalculatorPage() {
 
   const handleReset = () => {
     setPrincipal(1_000_000);
-    setMonthlyRate(5);
+    setMonthlyRate("5");
     setMethod("declining");
     setInstallments(12);
     setFreqKey("30");
@@ -219,10 +220,10 @@ export default function LoanCalculatorPage() {
                 <Input
                   label="Interest Rate (% / month)"
                   type="number"
-                  step="0.1"
+                  step="any"
                   min="0"
                   value={monthlyRate}
-                  onChange={(e) => setMonthlyRate(Number(e.target.value))}
+                  onChange={(e) => setMonthlyRate(e.target.value)}
                 />
                 <Select
                   label="Interest Method"
