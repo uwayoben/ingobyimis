@@ -171,8 +171,8 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
   try {
     const auth = getAuthUser(request);
     if (!auth) return unauthorized();
-    if (!["managing_director", "super_admin"].includes(auth.role)) {
-      return forbidden("Only a managing director can delete loans.");
+    if (!["managing_director", "loan_officer", "super_admin"].includes(auth.role)) {
+      return forbidden("Only a managing director or loan officer can delete loans.");
     }
 
     const { id } = await params;

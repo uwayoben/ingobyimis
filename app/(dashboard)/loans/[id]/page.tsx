@@ -754,6 +754,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
   const canApprove      = ["managing_director", "super_admin"].includes(role);
   const canDisburse     = ["managing_director", "loan_officer", "super_admin"].includes(role);
   const canRecordPayment = ["managing_director", "loan_officer", "super_admin"].includes(role);
+  const canDelete       = ["managing_director", "loan_officer", "super_admin"].includes(role);
 
   const [loan, setLoan]                 = useState<(Loan & { customer?: any; loanOfficer?: any; approvedBy?: any }) | null>(null);
   const [installments, setInstallments] = useState<Installment[]>([]);
@@ -932,7 +933,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
             <Button size="sm" icon={<ArrowDownToLine className="w-4 h-4" />} onClick={() => setActionModal("disburse")}>Disburse</Button>
           )}
           <Button variant="outline" size="sm" icon={<FileText className="w-4 h-4" />} onClick={() => setShowContractModal(true)}>Loan Agreement</Button>
-          {canApprove && (
+          {canDelete && (
             <Button variant="danger" size="sm" icon={<Trash2 className="w-4 h-4" />} onClick={() => { setDeleteError(""); setShowDeleteModal(true); }}>
               Delete
             </Button>
