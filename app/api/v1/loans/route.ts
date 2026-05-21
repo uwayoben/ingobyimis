@@ -102,7 +102,7 @@ export async function POST(request: Request) {
   try {
     const auth = getAuthUser(request);
     if (!auth) return unauthorized();
-    if (!["managing_director", "loan_officer"].includes(auth.role)) return forbidden();
+    if (!["managing_director", "loan_officer", "super_admin"].includes(auth.role)) return forbidden();
     if (!auth.companyId) return forbidden("Company context required.");
 
     const body = await request.json();
@@ -155,8 +155,17 @@ export async function POST(request: Request) {
     const prefix = (company?.name ?? "XX").replace(/[^a-zA-Z]/g, "").slice(0, 2).toUpperCase();
 
     const loan = await prisma.$transaction(async (tx) => {
-      const loanCount = await tx.loan.count({ where: { companyId: auth.companyId! } });
-      const seq    = String(loanCount + 1).padStart(3, "0");
+      // Find the highest existing sequence for this prefix to avoid ID collisions
+      // when loans have been deleted (COUNT-based approach recycles IDs).
+      const existing = await tx.loan.findMany({
+        where: { companyId: auth.companyId!, id: { startsWith: `${prefix}-` } },
+        select: { id: true },
+      });
+      const maxSeq = existing.reduce((max, l) => {
+        const n = parseInt(l.id.replace(`${prefix}-`, ""), 10);
+        return isNaN(n) ? max : Math.max(max, n);
+      }, 0);
+      const seq    = String(maxSeq + 1).padStart(3, "0");
       const loanId = `${prefix}-${seq}`;
 
       const newLoan = await tx.loan.create({
