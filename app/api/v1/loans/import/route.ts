@@ -8,15 +8,29 @@ import { z } from "zod";
 const VALID_IMPORT_STATUSES = ["pending", "active", "overdue", "completed", "written_off", "rejected", "disbursed"] as const;
 type ImportStatus = typeof VALID_IMPORT_STATUSES[number];
 
+/** Return candidate phone strings to search (handles leading 0, +250, 250 prefix) */
+function phoneVariants(raw: string): string[] {
+  const digits = raw.replace(/\D/g, "");
+  const variants = new Set<string>([raw, digits]);
+  if (digits.length === 9)  variants.add("0" + digits);            // 785337778 → 0785337778
+  if (digits.startsWith("250") && digits.length === 12) variants.add("0" + digits.slice(3)); // 250785337778 → 0785337778
+  if (digits.startsWith("0") && digits.length === 10)  variants.add("+250" + digits.slice(1));
+  return [...variants].filter(Boolean);
+}
+
 const rowSchema = z.object({
+  loan_id:                 z.string().optional().nullable().transform((v) => v?.trim() || undefined),
   customer_national_id:    z.string().min(1, "customer_national_id is required"),
+  customer_name:           z.string().optional().nullable().transform((v) => v?.trim() || undefined),
+  customer_phone:          z.string().optional().nullable().transform((v) => v?.trim() || undefined),
   purpose:                 z.string().optional().nullable().transform((v) => v || "Imported Loan"),
   amount:                  z.coerce.number().positive("amount must be positive").transform(Math.round),
-  annual_interest_rate:    z.coerce.number().min(0).max(200).default(0),
+  annual_interest_rate:    z.coerce.number().min(0).max(999).default(0),
   interest_method:         z.enum(["flat", "declining"]).optional().default("flat"),
   repayment_frequency_days:z.coerce.number().int().positive().optional().default(30),
   total_installments:      z.coerce.number().int().positive().optional().default(12),
   first_payment_date:      z.string().optional().nullable().transform((v) => v || undefined),
+  last_payment_date:       z.string().optional().nullable().transform((v) => v || undefined),
   branch_name:             z.string().optional().nullable().transform((v) => v || undefined),
   collateral_type:         z.string().optional().nullable().transform((v) => v || undefined),
   collateral_amount:       z.coerce.number().positive().optional().nullable().transform((v) => (v ? Math.round(v) : undefined)),
@@ -49,6 +63,9 @@ export async function POST(request: Request) {
     });
     const idPrefix = (company?.name ?? "XX").replace(/[^a-zA-Z]/g, "").slice(0, 2).toUpperCase();
 
+    // Track IDs used in this batch to detect in-file duplicates
+    const usedInBatch = new Set<string>();
+
     for (let i = 0; i < rows.length; i++) {
       const rowNum = i + 2; // row 1 = header
 
@@ -60,11 +77,29 @@ export async function POST(request: Request) {
 
       const d = parsed.data;
 
-      const customer = await prisma.customer.findFirst({
-        where: { nationalId: d.customer_national_id, companyId: auth.companyId! },
+      // Try National ID first (exact string match, then numeric-string match)
+      const natIdVariants = [...new Set([
+        d.customer_national_id,
+        // Strip non-digits in case it was stored differently
+        d.customer_national_id.replace(/\D/g, ""),
+        // In case it was stored as a number and converted: also try trimmed
+        d.customer_national_id.trim(),
+      ])];
+
+      let customer = await prisma.customer.findFirst({
+        where: { nationalId: { in: natIdVariants }, companyId: auth.companyId! },
       });
+
+      // Fallback: match by phone number if National ID lookup failed
+      if (!customer && d.customer_phone) {
+        const phones = phoneVariants(d.customer_phone);
+        customer = await prisma.customer.findFirst({
+          where: { phone: { in: phones }, companyId: auth.companyId! },
+        });
+      }
+
       if (!customer) {
-        errors.push({ row: rowNum, message: `Customer with national ID "${d.customer_national_id}" not found in this company` });
+        errors.push({ row: rowNum, message: `Customer not found — tried national ID "${d.customer_national_id}"${d.customer_phone ? ` and phone "${d.customer_phone}"` : ""}` });
         continue;
       }
 
@@ -130,10 +165,34 @@ export async function POST(request: Request) {
         d.repayment_frequency_days,
       );
 
+      const totalInterestScheduled = schedule.reduce((s, r) => s + r.interestDue, 0);
+      const totalMgmtFeeScheduled  = schedule.reduce((s, r) => s + r.managementFeeDue, 0);
+
+      // Parse last payment date if provided
+      const lastPaymentDate = d.last_payment_date ? new Date(d.last_payment_date) : undefined;
+      if (lastPaymentDate && isNaN(lastPaymentDate.getTime())) {
+        errors.push({ row: rowNum, message: `Invalid last_payment_date: "${d.last_payment_date}"` });
+        continue;
+      }
+
       try {
         await prisma.$transaction(async (tx) => {
-          const loanCount = await tx.loan.count({ where: { companyId: auth.companyId! } });
-          const loanId    = `${idPrefix}-${String(loanCount + 1).padStart(3, "0")}`;
+          let loanId = d.loan_id;
+          if (!loanId) {
+            const loanCount = await tx.loan.count({ where: { companyId: auth.companyId! } });
+            loanId = `${idPrefix}-${String(loanCount + 1).padStart(3, "0")}`;
+          } else {
+            // Deduplicate: suffix with -2, -3 … if the ID is already taken in DB or in this batch
+            const base = loanId;
+            let suffix = 2;
+            while (
+              usedInBatch.has(loanId) ||
+              (await tx.loan.findUnique({ where: { id: loanId }, select: { id: true } }))
+            ) {
+              loanId = `${base}-${suffix++}`;
+            }
+          }
+          usedInBatch.add(loanId);
 
           const loan = await tx.loan.create({
             data: {
@@ -150,6 +209,8 @@ export async function POST(request: Request) {
               agreedMaturityDate,
               totalInstallments:      d.total_installments,
               totalRepayable,
+              totalInterestScheduled,
+              totalMgmtFeeScheduled,
               balanceOutstanding:     d.balance_outstanding ?? (importStatus === "completed" ? 0 : d.amount),
               nextPaymentDate:        firstPaymentDate,
               nextPaymentAmount,
@@ -159,9 +220,10 @@ export async function POST(request: Request) {
               loanClass,
               provisioningRate,
               provisionRequired,
-              status:                 importStatus.replace("written_off", "written_off") as LoanStatus,
+              status:                 importStatus as LoanStatus,
               disbursedAmount:        isLive ? d.amount : 0,
               disbursementDate:       disbursementDate ?? null,
+              lastPaymentDate:        lastPaymentDate ?? null,
               daysOverdue,
               arrearsStartDate:       arrearsStartDate ?? null,
               penaltyRatePerDay:      d.penalty_rate > 0 ? d.penalty_rate / 365 : 0,
@@ -170,12 +232,13 @@ export async function POST(request: Request) {
 
           await tx.installment.createMany({
             data: schedule.map((row) => ({
-              loanId:        loan.id,
-              installmentNo: row.installmentNo,
-              dueDate:       row.dueDate,
-              principalDue:  row.principalDue,
-              interestDue:   row.interestDue,
-              totalDue:      row.totalDue,
+              loanId:          loan.id,
+              installmentNo:   row.installmentNo,
+              dueDate:         row.dueDate,
+              principalDue:    row.principalDue,
+              interestDue:     row.interestDue,
+              managementFeeDue: row.managementFeeDue,
+              totalDue:        row.totalDue,
             })),
           });
         });

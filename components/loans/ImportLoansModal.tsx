@@ -81,10 +81,21 @@ const LOAN_COLUMN_MAP: Record<string, string> = {
   "client id":                      "customer_national_id",
   "customer id":                    "customer_national_id",
   "id number":                      "customer_national_id",
+  "customer name":                  "customer_name",
+  "client name":                    "customer_name",
+  "borrower":                       "customer_name",
+  "phone":                          "customer_phone",
+  "mobile":                         "customer_phone",
+  "telephone":                      "customer_phone",
+  "loan number":                    "loan_id",
+  "loan no":                        "loan_id",
+  "loan id":                        "loan_id",
   "loan status":                    "status",
   "status":                         "status",
   "disbursement date":              "disbursement_date",
   "date disbursed":                 "disbursement_date",
+  "first payment date":             "first_payment_date",
+  "last payment date":              "last_payment_date",
   "principal amount (rwf)":         "amount",
   "principal amount":               "amount",
   "loan amount":                    "amount",
@@ -109,12 +120,13 @@ const LOAN_COLUMN_MAP: Record<string, string> = {
   "collateral amount":              "collateral_amount",
   "penalty rate (%)":               "penalty_rate",
   "repayment frequency":            "repayment_frequency_days",
+  "installment frequency":          "repayment_frequency_days",
   "frequency":                      "repayment_frequency_days",
+  "no. of installments":            "total_installments",
   "total installments":             "total_installments",
   "installments":                   "total_installments",
   "number of installments":         "total_installments",
   "term":                           "total_installments",
-  "first payment date":             "first_payment_date",
   "purpose":                        "purpose",
   "loan purpose":                   "purpose",
   "branch":                         "branch_name",
@@ -122,7 +134,16 @@ const LOAN_COLUMN_MAP: Record<string, string> = {
 };
 
 /** Fields whose values need date conversion (Excel serial or DD/MM/YYYY → YYYY-MM-DD) */
-const DATE_FIELDS = new Set(["disbursement_date", "first_payment_date"]);
+const DATE_FIELDS = new Set(["disbursement_date", "first_payment_date", "last_payment_date"]);
+
+/** Installment frequency string → days */
+const FREQUENCY_MAP: Record<string, string> = {
+  "monthly":   "30",
+  "weekly":    "7",
+  "biweekly":  "14",
+  "bi-weekly": "14",
+  "daily":     "1",
+};
 
 /** Status values from reports → our API status */
 const STATUS_MAP: Record<string, string> = {
@@ -154,21 +175,39 @@ async function parseXLSX(file: File): Promise<{ headers: string[]; matrix: strin
   const rawHeaders = raw[headerRowIdx] as unknown[];
   const headers = rawHeaders.map((h) => String(h ?? "").trim());
 
-  // Map raw values; apply date conversion for known date fields
-  const matrix = (raw.slice(headerRowIdx + 1) as unknown[][]).map((row) =>
-    headers.map((h, i) => {
-      const rawKey = h.toLowerCase().trim();
-      const apiKey = LOAN_COLUMN_MAP[rawKey];
-      const v = row[i];
-      if (DATE_FIELDS.has(apiKey ?? "") && v !== "" && v !== undefined) return toISODate(v);
-      if (apiKey === "status") {
-        const mapped = STATUS_MAP[(String(v ?? "")).toLowerCase().trim()];
-        return mapped ?? String(v ?? "").trim().toLowerCase();
-      }
-      if (apiKey === "interest_method") return (String(v ?? "")).toLowerCase().trim();
-      return v === null || v === undefined ? "" : String(v);
+  // Detect if this is a monthly-rate file (has "Installment Frequency" column)
+  // e.g. "Loans-Standard-Fixed.xlsx" stores rates per month, not per year
+  const isMonthlyRateFile = headers.some((h) => h.toLowerCase() === "installment frequency");
+
+  // Map raw values; apply date/frequency/rate conversions
+  const matrix = (raw.slice(headerRowIdx + 1) as unknown[][])
+    // Filter out TOTALS / summary rows
+    .filter((row) => {
+      const first = String(row[0] ?? "").trim().toUpperCase();
+      return first !== "" && !first.startsWith("TOTALS") && !first.startsWith("TOTAL LOANS");
     })
-  );
+    .map((row) =>
+      headers.map((h, i) => {
+        const rawKey = h.toLowerCase().trim();
+        const apiKey = LOAN_COLUMN_MAP[rawKey];
+        const v = row[i];
+        if (DATE_FIELDS.has(apiKey ?? "") && v !== "" && v !== undefined) return toISODate(v);
+        if (apiKey === "status") {
+          const mapped = STATUS_MAP[(String(v ?? "")).toLowerCase().trim()];
+          return mapped ?? String(v ?? "").trim().toLowerCase();
+        }
+        if (apiKey === "interest_method") return (String(v ?? "")).toLowerCase().trim();
+        if (apiKey === "repayment_frequency_days") {
+          const freqStr = String(v ?? "").toLowerCase().trim();
+          return FREQUENCY_MAP[freqStr] ?? String(v ?? "");
+        }
+        if (apiKey === "annual_interest_rate" && isMonthlyRateFile) {
+          const n = Number(v);
+          return isNaN(n) ? String(v ?? "") : String(Math.round(n * 12 * 1000) / 1000);
+        }
+        return v === null || v === undefined ? "" : String(v);
+      })
+    );
 
   return { headers, matrix };
 }
@@ -185,8 +224,8 @@ function validateRow(row: ParsedRow): string | null {
     return "amount must be a positive number";
 
   const rate = Number(row.annual_interest_rate);
-  if (!row.annual_interest_rate || isNaN(rate) || rate < 0 || rate > 200)
-    return "interest rate must be between 0 and 200";
+  if (!row.annual_interest_rate || isNaN(rate) || rate < 0 || rate > 999)
+    return "interest rate must be between 0 and 999";
 
   return null;
 }
