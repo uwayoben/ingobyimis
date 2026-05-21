@@ -19,10 +19,18 @@ function loanPeriodRate(loan: Loan): number {
   return loan.annualInterestRate / 100 / (360 / loan.repaymentFrequencyDays);
 }
 
+function calcInterestRemaining(loan: Loan): number {
+  const totalMgmtFeeScheduled = loan.totalMgmtFeeScheduled ?? 0;
+  const totalInterest = (loan.totalInterestScheduled ?? 0) > 0
+    ? loan.totalInterestScheduled!
+    : loan.totalRepayable - loan.amount - totalMgmtFeeScheduled;
+  return Math.max(0, totalInterest - loan.amountRepaidInterest);
+}
+
 function trueOutstanding(loan: Loan): number {
   if (loan.status === "completed") return 0;
-  const interestRemaining = Math.max(0, (loan.totalRepayable - loan.amount) - loan.amountRepaidInterest);
-  return loan.balanceOutstanding + interestRemaining + loan.penaltyAmount;
+  const mgmtFeeRemaining = Math.max(0, (loan.totalMgmtFeeScheduled ?? 0) - (loan.amountRepaidMgmtFee ?? 0));
+  return loan.balanceOutstanding + calcInterestRemaining(loan) + mgmtFeeRemaining + loan.penaltyAmount;
 }
 
 
@@ -89,13 +97,6 @@ export default function LoansPage() {
     const t = setTimeout(fetchLoans, search ? 300 : 0);
     return () => clearTimeout(t);
   }, [fetchLoans]);
-
-  // Reclassify loans in the background every time this page mounts
-  useEffect(() => {
-    apiFetch("/api/v1/cron/classify-loans", { method: "POST" })
-      .then(() => fetchLoans())   // refresh list after classification updates
-      .catch(() => {});
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const displayed = classFilter === "All Classes"
     ? loans
@@ -279,7 +280,7 @@ export default function LoansPage() {
               <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
                 <AnimatePresence>
                   {displayed.map((loan, i) => {
-                    const interestRemaining = Math.max(0, (loan.totalRepayable - loan.amount) - loan.amountRepaidInterest);
+                    const interestRemaining = calcInterestRemaining(loan);
                     const isPastDue = new Date(loan.agreedMaturityDate) < new Date() && !["completed", "written_off", "rejected"].includes(loan.status);
 
                     return (
@@ -358,7 +359,7 @@ export default function LoansPage() {
                             {formatCurrency(loan.amountRepaidInterest)}
                           </p>
                           <p className="text-[10px] text-gray-400">
-                            of {formatCurrency(loan.totalRepayable - loan.amount)}
+                            of {formatCurrency(calcInterestRemaining(loan) + loan.amountRepaidInterest)}
                           </p>
                         </td>
 

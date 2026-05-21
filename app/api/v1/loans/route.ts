@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getAuthUser } from "@/lib/auth";
 import { created, paginated, unauthorized, badRequest, forbidden, serverError } from "@/lib/api-response";
-import { generateSchedule, classifyLoan } from "@/lib/loan-schedule";
+import { classifyLoan } from "@/lib/loan-schedule";
 import { z } from "zod";
 
 const createSchema = z.object({
@@ -13,10 +13,10 @@ const createSchema = z.object({
   interestMethod:         z.enum(["flat", "declining"]),
   repaymentFrequencyDays: z.number().int().positive(),
   gracePeriodDays:        z.number().int().min(0).default(0),
-  firstPaymentDate:       z.string(),           // ISO date string
+  // firstPaymentDate is calculated at disbursement — not required at registration
   totalInstallments:      z.number().int().positive(),
   penaltyRatePerDay:      z.number().min(0).max(100).default(0),
-  managementFeeRate:      z.number().min(0).max(100).default(0),  // annual %, charged per installment like interest
+  managementFeeRate:      z.number().min(0).default(0),  // annual %, charged per installment like interest
   collateralType:         z.string().optional(),
   collateralAmount:       z.number().int().optional(),
   eligibleCollateral:     z.number().int().optional(),
@@ -110,47 +110,42 @@ export async function POST(request: Request) {
     if (!parsed.success) return badRequest(parsed.error.issues[0].message);
 
     const d = parsed.data;
-    const firstPaymentDate   = new Date(d.firstPaymentDate);
     const periodsPerYear     = 360 / d.repaymentFrequencyDays;
     const interestPeriodRate = d.annualInterestRate / 100 / periodsPerYear;
     const mgmtFeePeriodRate  = d.managementFeeRate  / 100 / periodsPerYear;
     const combinedPeriodRate = interestPeriodRate + mgmtFeePeriodRate;
 
     // Total repayable — includes principal + interest + management fee
-    let totalRepayable: number;
-    let nextPaymentAmount: number;
+    // (dates not needed for this calculation)
+    let totalRepayable        = 0;
+    let nextPaymentAmount     = 0;
+    let totalInterestScheduled = 0;
+    let totalMgmtFeeScheduled  = 0;
+
     if (d.interestMethod === "flat") {
-      const totalInterest = d.amount * interestPeriodRate * d.totalInstallments;
-      const totalMgmtFee  = d.amount * mgmtFeePeriodRate  * d.totalInstallments;
-      totalRepayable    = Math.round(d.amount + totalInterest + totalMgmtFee);
-      nextPaymentAmount = Math.round(totalRepayable / d.totalInstallments);
+      const totalInterest    = d.amount * interestPeriodRate * d.totalInstallments;
+      const totalMgmtFee     = d.amount * mgmtFeePeriodRate  * d.totalInstallments;
+      totalRepayable         = Math.round(d.amount + totalInterest + totalMgmtFee);
+      nextPaymentAmount      = Math.round(totalRepayable / d.totalInstallments);
+      totalInterestScheduled = Math.round(totalInterest);
+      totalMgmtFeeScheduled  = Math.round(totalMgmtFee);
     } else {
       const exactEmi = combinedPeriodRate === 0
         ? d.amount / d.totalInstallments
         : (d.amount * combinedPeriodRate) / (1 - Math.pow(1 + combinedPeriodRate, -d.totalInstallments));
-      nextPaymentAmount = Math.round(exactEmi);
-      totalRepayable    = Math.round(exactEmi * d.totalInstallments);
+      nextPaymentAmount      = Math.round(exactEmi);
+      totalRepayable         = Math.round(exactEmi * d.totalInstallments);
+      const totalFees        = totalRepayable - d.amount;
+      totalInterestScheduled = combinedPeriodRate > 0 ? Math.round(totalFees * (interestPeriodRate / combinedPeriodRate)) : totalFees;
+      totalMgmtFeeScheduled  = combinedPeriodRate > 0 ? Math.round(totalFees * (mgmtFeePeriodRate  / combinedPeriodRate)) : 0;
     }
-
-    // Agreed maturity date = firstPaymentDate + (n-1) * frequencyDays
-    const agreedMaturityDate = new Date(firstPaymentDate);
-    agreedMaturityDate.setDate(agreedMaturityDate.getDate() + (d.totalInstallments - 1) * d.repaymentFrequencyDays);
 
     // BNR provisioning (new loan = Normal, 1%)
     const { loanClass, provisioningRate } = classifyLoan(0);
     const provisionRequired = Math.round(d.amount * provisioningRate / 100);
 
-    // Generate installment schedule (includes management fee per installment)
-    const schedule = generateSchedule(
-      d.amount,
-      d.annualInterestRate,
-      d.interestMethod,
-      d.totalInstallments,
-      firstPaymentDate,
-      d.repaymentFrequencyDays,
-      d.managementFeeRate,
-    );
-    const totalMgmtFeeScheduled = schedule.reduce((s, r) => s + r.managementFeeDue, 0);
+    // firstPaymentDate and agreedMaturityDate are calculated at disbursement — not set here
+    // Installment schedule is also generated at disbursement time
 
     // Build the custom loan ID: first 2 letters of company name + zero-padded sequence
     const company = await prisma.company.findUnique({
@@ -177,15 +172,14 @@ export async function POST(request: Request) {
           interestMethod:         d.interestMethod,
           repaymentFrequencyDays: d.repaymentFrequencyDays,
           gracePeriodDays:        d.gracePeriodDays,
-          firstPaymentDate,
-          agreedMaturityDate,
+          // firstPaymentDate, agreedMaturityDate, nextPaymentDate set at disbursement
           totalInstallments:      d.totalInstallments,
           totalRepayable,
           balanceOutstanding:     d.amount,
-          nextPaymentDate:        firstPaymentDate,
           nextPaymentAmount,
           penaltyRatePerDay:      d.penaltyRatePerDay,
           managementFeeRate:      d.managementFeeRate,
+          totalInterestScheduled,
           totalMgmtFeeScheduled,
           collateralType:         d.collateralType,
           collateralAmount:       d.collateralAmount,
@@ -199,18 +193,7 @@ export async function POST(request: Request) {
         },
       });
 
-      // Create installment schedule
-      await tx.installment.createMany({
-        data: schedule.map((row) => ({
-          loanId:           newLoan.id,
-          installmentNo:    row.installmentNo,
-          dueDate:          row.dueDate,
-          principalDue:     row.principalDue,
-          interestDue:      row.interestDue,
-          managementFeeDue: row.managementFeeDue,
-          totalDue:         row.totalDue,
-        })),
-      });
+      // Installment schedule is NOT created here — it is generated at disbursement time
 
       // Attach supporting documents
       if (d.documents?.length) {

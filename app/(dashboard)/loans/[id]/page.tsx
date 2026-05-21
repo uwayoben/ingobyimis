@@ -29,7 +29,10 @@ function loanPeriodRate(loan: Loan): number {
 
 function interestRemaining(loan: Loan): number {
   const totalMgmtFeeScheduled = loan.totalMgmtFeeScheduled ?? 0;
-  return Math.max(0, (loan.totalRepayable - loan.amount - totalMgmtFeeScheduled) - loan.amountRepaidInterest);
+  const totalInterest = (loan.totalInterestScheduled ?? 0) > 0
+    ? loan.totalInterestScheduled!
+    : loan.totalRepayable - loan.amount - totalMgmtFeeScheduled;
+  return Math.max(0, totalInterest - loan.amountRepaidInterest);
 }
 
 function mgmtFeeRemaining(loan: Loan): number {
@@ -765,6 +768,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
   const [showWaiveModal,    setShowWaiveModal]    = useState(false);
   const [showTopUpModal,    setShowTopUpModal]    = useState(false);
   const [showContractModal, setShowContractModal] = useState(false);
+  const [disburseDate,      setDisburseDate]      = useState(() => new Date().toISOString().slice(0, 10));
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -788,12 +792,9 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
     }
   }, [id]);
 
-  // Reclassify before loading so the detail page shows the current classification
   useEffect(() => {
-    apiFetch("/api/v1/cron/classify-loans", { method: "POST" })
-      .catch(() => {})
-      .finally(() => fetchData());
-  }, [fetchData]); // eslint-disable-line react-hooks/exhaustive-deps
+    fetchData();
+  }, [fetchData]);
 
   const handleAction = async (action: "approve" | "reject" | "disburse") => {
     setActioning(true);
@@ -802,7 +803,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
       const body =
         action === "approve"  ? { status: "approved" } :
         action === "reject"   ? { status: "rejected" } :
-        { status: "active" };
+        { status: "active", disbursementDate: disburseDate };
       const res  = await apiFetch(`/api/v1/loans/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -840,7 +841,8 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
   const progressPct    = loan.totalInstallments > 0 ? (loan.installmentsPaid / loan.totalInstallments) * 100 : 0;
   const totalOuts      = trueOutstanding(loan);
   const intRemaining   = interestRemaining(loan);
-  const totalPaid      = loan.amountRepaidPrincipal + loan.amountRepaidInterest + (loan.penaltyPaid ?? 0);
+  const mgmtFeeRepaid  = loan.amountRepaidMgmtFee ?? 0;
+  const totalPaid      = loan.amountRepaidPrincipal + loan.amountRepaidInterest + mgmtFeeRepaid + (loan.penaltyPaid ?? 0);
   const companyName   = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}").companyName ?? "NDF" : "NDF";
   const canPayment    = ["active", "overdue", "disbursed"].includes(loan.status) ||
     (loan.status === "completed" && trueOutstanding(loan) > 0);
@@ -916,15 +918,30 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
       </div>
 
       {/* ── KPI Row ───────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        {[
-          { label: "Loan Amount",       value: formatCurrency(loan.amount),               color: "text-gray-900 dark:text-gray-100",      border: "border-l-gray-400" },
-          { label: "Total Repayable",   value: formatCurrency(loan.totalRepayable),        color: "text-blue-600 dark:text-blue-400",       border: "border-l-blue-500" },
-          { label: "Total Paid",        value: formatCurrency(totalPaid),                  color: "text-emerald-600 dark:text-emerald-400", border: "border-l-emerald-500" },
-          { label: "Principal Repaid",  value: formatCurrency(loan.amountRepaidPrincipal), color: "text-green-600 dark:text-green-400",     border: "border-l-green-500" },
-          { label: "Interest Repaid",   value: formatCurrency(loan.amountRepaidInterest),  color: "text-amber-600 dark:text-amber-400",     border: "border-l-amber-500" },
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+        {([
+          { label: "Loan Amount",       value: formatCurrency(loan.amount),               color: "text-gray-900 dark:text-gray-100",        border: "border-l-gray-400" },
+          { label: "Total Repayable",   value: formatCurrency(loan.totalRepayable),        color: "text-blue-600 dark:text-blue-400",         border: "border-l-blue-500" },
+          { label: "Total Paid",        value: formatCurrency(totalPaid),                  color: "text-emerald-600 dark:text-emerald-400",   border: "border-l-emerald-500" },
           { label: "Total Outstanding", value: formatCurrency(totalOuts),                  color: totalOuts > 0 ? "text-red-600 dark:text-red-400" : "text-gray-400", border: totalOuts > 0 ? "border-l-red-500" : "border-l-gray-200" },
-        ].map((s) => (
+          { label: "Principal Repaid",  value: formatCurrency(loan.amountRepaidPrincipal), color: "text-green-600 dark:text-green-400",       border: "border-l-green-500" },
+          { label: "Interest Paid",     value: formatCurrency(loan.amountRepaidInterest),  color: "text-amber-600 dark:text-amber-400",       border: "border-l-amber-500" },
+          { label: "Interest Remaining",value: formatCurrency(intRemaining),               color: intRemaining > 0 ? "text-amber-700 dark:text-amber-300" : "text-gray-400", border: intRemaining > 0 ? "border-l-amber-400" : "border-l-gray-200" },
+          ...(loan.managementFeeRate > 0 ? [
+            {
+              label: "Mgmt Fee Paid",
+              value: formatCurrency(mgmtFeeRepaid),
+              color: "text-purple-600 dark:text-purple-400",
+              border: "border-l-purple-400",
+            },
+            {
+              label: "Mgmt Fee Remaining",
+              value: formatCurrency(mgmtFeeRemaining(loan)),
+              color: mgmtFeeRemaining(loan) > 0 ? "text-purple-700 dark:text-purple-300" : "text-gray-400",
+              border: mgmtFeeRemaining(loan) > 0 ? "border-l-purple-500" : "border-l-gray-200",
+            },
+          ] : []),
+        ] as { label: string; value: string; color: string; border: string }[]).map((s) => (
           <Card key={s.label} className={cn("border-l-4", s.border)}>
             <CardContent className="pt-3 pb-3">
               <p className={cn("text-base font-bold", s.color)}>{s.value}</p>
@@ -1059,7 +1076,13 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                     { label: "Repayment",      value: `${loan.repaymentFrequencyDays === 30 ? "Monthly" : loan.repaymentFrequencyDays === 7 ? "Weekly" : loan.repaymentFrequencyDays === 14 ? "Bi-weekly" : `Every ${loan.repaymentFrequencyDays}d`} · ${loan.totalInstallments} installments` },
                     { label: "First Payment",  value: loan.firstPaymentDate ? formatDate(loan.firstPaymentDate) : "—" },
                     { label: "Maturity Date",  value: formatDate(loan.agreedMaturityDate) },
-                    { label: "Total Repayable",value: formatCurrency(loan.totalRepayable) },
+                    { label: "Total Repayable",    value: formatCurrency(loan.totalRepayable) },
+                    { label: "Interest Paid",      value: formatCurrency(loan.amountRepaidInterest) },
+                    { label: "Interest Remaining", value: formatCurrency(intRemaining) },
+                    ...(loan.managementFeeRate > 0 ? [
+                      { label: "Mgmt Fee Paid",      value: formatCurrency(mgmtFeeRepaid) },
+                      { label: "Mgmt Fee Remaining", value: formatCurrency(mgmtFeeRemaining(loan)) },
+                    ] : []),
                     ...(loan.branchName ? [{ label: "Branch", value: loan.branchName }] : []),
                   ].map((item) => (
                     <div key={item.label} className="flex justify-between items-start gap-4">
@@ -1540,6 +1563,18 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
             {actionModal === "reject"   && <>Reject this loan application? This action cannot be undone.</>}
             {actionModal === "disburse" && <>Disburse <strong>{formatCurrency(loan.amount)}</strong> to <strong>{loan.customer?.names ?? loan.customerName}</strong>? The loan will become active and repayment will start.</>}
           </p>
+          {actionModal === "disburse" && (
+            <div>
+              <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Disbursement Date</label>
+              <input
+                type="date"
+                value={disburseDate}
+                onChange={(e) => setDisburseDate(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-green-500"
+              />
+              <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Backdate if recording a past disbursement</p>
+            </div>
+          )}
           <div className="flex justify-end gap-3">
             <Button variant="outline" onClick={() => { setActionModal(null); setActionError(""); }}>Cancel</Button>
             <Button

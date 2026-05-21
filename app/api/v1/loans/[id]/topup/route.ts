@@ -93,7 +93,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       loan.repaymentFrequencyDays,
       effectiveMgmtFeeRate,
     );
-    const newTotalMgmtFeeScheduled = newSchedule.reduce((s, r) => s + r.managementFeeDue, 0);
+    const newTotalMgmtFeeScheduled    = newSchedule.reduce((s, r) => s + r.managementFeeDue, 0);
+    const newTotalInterestScheduled   = newSchedule.reduce((s, r) => s + r.interestDue,      0);
 
     const { loanClass, provisioningRate } = classifyLoan(0); // reset to Normal after top-up
     const provisionRequired = Math.round(newPrincipal * provisioningRate / 100);
@@ -176,8 +177,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           // Reset repaid trackers so interest-remaining formula works cleanly with the new schedule
           amountRepaidPrincipal:  0,
           amountRepaidInterest:   0,
-          amountRepaidMgmtFee:    0,
-          totalMgmtFeeScheduled:  newTotalMgmtFeeScheduled,
+          amountRepaidMgmtFee:       0,
+          totalInterestScheduled:    newTotalInterestScheduled,
+          totalMgmtFeeScheduled:     newTotalMgmtFeeScheduled,
           nextPaymentDate:       newFirstPaymentDate,
           nextPaymentAmount:     newInstallmentAmount,
           agreedMaturityDate:    newMaturityDate,

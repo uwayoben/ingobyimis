@@ -86,8 +86,12 @@ export async function POST(request: Request) {
       return badRequest("Payments can only be recorded on active or overdue loans.");
     }
     if (loan.status === "completed") {
-      const remainingInterestCheck = Math.max(0, (loan.totalRepayable - loan.amount) - loan.amountRepaidInterest);
-      const stillOwed = loan.balanceOutstanding + remainingInterestCheck + loan.penaltyAmount;
+      const totalSchedInt       = loan.totalInterestScheduled > 0
+        ? loan.totalInterestScheduled
+        : loan.totalRepayable - loan.amount - (loan.totalMgmtFeeScheduled ?? 0);
+      const remainingIntCheck   = Math.max(0, totalSchedInt - loan.amountRepaidInterest);
+      const remainingMgmtCheck  = Math.max(0, (loan.totalMgmtFeeScheduled ?? 0) - (loan.amountRepaidMgmtFee ?? 0));
+      const stillOwed = loan.balanceOutstanding + remainingIntCheck + remainingMgmtCheck + loan.penaltyAmount;
       if (stillOwed <= 0) {
         return badRequest("This loan is already fully paid.");
       }
@@ -119,8 +123,10 @@ export async function POST(request: Request) {
       currentMgmtFee = Math.min(periodMgmtFee, remainingMgmtFee);
     }
 
-    // Interest tracking — totalRepayable already excludes management fee so subtract it back
-    const totalScheduledInterest = loan.totalRepayable - loan.amount - totalMgmtFeeScheduled;
+    // Interest tracking — use stored schedule sum to avoid rounding drift vs totalMgmtFeeScheduled
+    const totalScheduledInterest = loan.totalInterestScheduled > 0
+      ? loan.totalInterestScheduled
+      : loan.totalRepayable - loan.amount - totalMgmtFeeScheduled; // fallback for old rows
     const remainingInterest      = Math.max(0, totalScheduledInterest - loan.amountRepaidInterest);
 
     let currentInterest: number;

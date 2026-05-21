@@ -262,7 +262,14 @@ function FeeInput({
   onTypeChange: (t: "fixed" | "percentage") => void;
   onValueChange: (v: number) => void;
 }) {
-  const computed = type === "percentage" ? Math.round(principal * value / 100) : 0;
+  const [raw, setRaw] = useState(value > 0 ? String(value) : "");
+
+  useEffect(() => {
+    if (value === 0) setRaw("");
+  }, [value]);
+
+  const numVal  = parseFloat(raw) || 0;
+  const computed = type === "percentage" ? Math.round(principal * numVal / 100) : 0;
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between mb-1">
@@ -287,13 +294,17 @@ function FeeInput({
       <input
         type="number"
         min="0"
-        step={type === "percentage" ? "0.5" : "1"}
-        value={value || ""}
-        onChange={(e) => onValueChange(Number(e.target.value))}
+        step="any"
+        value={raw}
+        onChange={(e) => {
+          setRaw(e.target.value);
+          const n = parseFloat(e.target.value);
+          onValueChange(isNaN(n) ? 0 : n);
+        }}
         placeholder={type === "percentage" ? "e.g. 2" : "e.g. 50,000"}
         className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-green-500"
       />
-      {type === "percentage" && value > 0 && principal > 0 && (
+      {type === "percentage" && numVal > 0 && principal > 0 && (
         <p className="text-[11px] text-green-600 dark:text-green-400 font-semibold">= {fmt(computed)}</p>
       )}
     </div>
@@ -320,11 +331,11 @@ export default function NewLoanPage() {
     customerId:       "",
     // Terms
     principal:        0,
-    monthlyRate:      0,
+    monthlyRate:      "",
     interestMethod:   "declining" as "flat" | "declining",
     frequency:        "monthly",
     installments:     0,
-    penaltyRate:      0,
+    penaltyRate:      "",
     // Fees
     applicationFee:        0,
     applicationFeeType:    "fixed"       as "fixed" | "percentage",
@@ -333,9 +344,7 @@ export default function NewLoanPage() {
     managementFeeMode:     "one_time"    as "one_time" | "per_installment",
     managementFee:         0,            // used when mode = one_time (fixed RWF or % of principal)
     managementFeeType:     "percentage"  as "fixed" | "percentage",
-    managementFeeRate:     0,            // used when mode = per_installment (% per month)
-    // Schedule
-    firstPaymentDate: (() => { const d = new Date(); d.setMonth(d.getMonth() + 1); return d.toISOString().slice(0, 10); })(),
+    managementFeeRate:     "",           // used when mode = per_installment (% per month, stored as string)
     // Collateral
     collateralValue:  0,
     collateralType:   "",
@@ -357,12 +366,11 @@ export default function NewLoanPage() {
 
   const freqDays = FREQ_OPTIONS.find((o) => o.value === form.frequency)?.days ?? 30;
   // Use the same 30-day-month convention as the API so preview matches saved values
-  const periodRatePct        = form.monthlyRate * (freqDays / 30);
+  const periodRatePct        = (parseFloat(form.monthlyRate) || 0) * (freqDays / 30);
   const periodMgmtFeeRatePct = form.managementFeeMode === "per_installment"
-    ? form.managementFeeRate * (freqDays / 30)
+    ? (parseFloat(form.managementFeeRate) || 0) * (freqDays / 30)
     : 0;
   const calc = calcLoan(form.principal, periodRatePct, periodMgmtFeeRatePct, form.installments, form.interestMethod);
-  const expectedCompletion = addPeriods(form.firstPaymentDate, form.installments, form.frequency);
 
   const customerAddress = selected
     ? [selected.village, selected.cell, selected.sector, selected.district, selected.province].filter(Boolean).join(", ")
@@ -419,14 +427,13 @@ export default function NewLoanPage() {
           purpose:                form.purpose,
           branchName:             form.branchName || undefined,
           amount:                 form.principal,
-          annualInterestRate:     form.monthlyRate * 12,
+          annualInterestRate:     (parseFloat(form.monthlyRate) || 0) * 12,
           interestMethod:         form.interestMethod,
           repaymentFrequencyDays: freqDays,
           totalInstallments:      form.installments,
           gracePeriodDays:        0,
-          firstPaymentDate:       form.firstPaymentDate,
-          penaltyRatePerDay:      form.penaltyRate || 0,
-          managementFeeRate:      form.managementFeeMode === "per_installment" ? (form.managementFeeRate * 12) : 0,
+          penaltyRatePerDay:      parseFloat(form.penaltyRate) || 0,
+          managementFeeRate:      form.managementFeeMode === "per_installment" ? (parseFloat(form.managementFeeRate) || 0) * 12 : 0,
           collateralType:         form.collateralType  || undefined,
           collateralAmount:       form.collateralValue || undefined,
           eligibleCollateral:     form.collateralValue || undefined,
@@ -558,12 +565,11 @@ export default function NewLoanPage() {
                 <Input
                   label="Interest Rate (% / month)"
                   type="number"
-                  step="0.1"
+                  step="any"
                   min="0"
-                  max="100"
                   placeholder="e.g. 5"
-                  value={form.monthlyRate || ""}
-                  onChange={(e) => set("monthlyRate", Number(e.target.value))}
+                  value={form.monthlyRate}
+                  onChange={(e) => set("monthlyRate", e.target.value)}
                   required
                 />
                 <Select
@@ -598,45 +604,12 @@ export default function NewLoanPage() {
                   type="number"
                   step="any"
                   min="0"
-                  max="100"
                   placeholder="e.g. 0.33"
-                  value={form.penaltyRate || ""}
-                  onChange={(e) => set("penaltyRate", parseFloat(e.target.value) || 0)}
+                  value={form.penaltyRate}
+                  onChange={(e) => set("penaltyRate", e.target.value)}
                   hint="Supports up to 3 decimal places"
                 />
               </div>
-
-              {/* Auto-calculated totals */}
-              {calc && (
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-gray-500 dark:text-gray-400">EMI / Installment Amount</label>
-                    <div className="px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm font-semibold text-gray-700 dark:text-gray-300">
-                      {fmt(calc.emi)}
-                    </div>
-                    {calc.totalMgmtFee > 0 && (
-                      <p className="text-[11px] text-purple-600 dark:text-purple-400">
-                        incl. mgmt fee {fmt(Math.round(calc.totalMgmtFee / form.installments))}/installment
-                      </p>
-                    )}
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Total Interest</label>
-                    <div className="px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm font-semibold text-gray-700 dark:text-gray-300">
-                      {fmt(calc.totalInterest)}
-                    </div>
-                    {calc.totalMgmtFee > 0 && (
-                      <p className="text-[11px] text-purple-600 dark:text-purple-400">+ {fmt(calc.totalMgmtFee)} mgmt fee</p>
-                    )}
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Total Repayment</label>
-                    <div className="px-3 py-2 rounded-xl border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 text-sm font-bold text-green-700 dark:text-green-400">
-                      {fmt(calc.totalRepayable)}
-                    </div>
-                  </div>
-                </div>
-              )}
 
               {/* Fees */}
               <div className="space-y-4 pt-2 border-t border-gray-100 dark:border-gray-800">
@@ -699,8 +672,8 @@ export default function NewLoanPage() {
                         type="number"
                         min="0"
                         step="any"
-                        value={form.managementFeeRate || ""}
-                        onChange={(e) => set("managementFeeRate", parseFloat(e.target.value) || 0)}
+                        value={form.managementFeeRate}
+                        onChange={(e) => set("managementFeeRate", e.target.value)}
                         placeholder="e.g. 1"
                         className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-green-500"
                       />
@@ -709,29 +682,33 @@ export default function NewLoanPage() {
                   )}
                 </div>
               </div>
-            </Section>
 
-            {/* 4. Repayment Schedule */}
-            <Section title="Repayment Schedule" description="First payment date — expected completion is calculated automatically">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <Input
-                  label="First Payment Date"
-                  type="date"
-                  value={form.firstPaymentDate}
-                  onChange={(e) => set("firstPaymentDate", e.target.value)}
-                  required
-                />
-                <div className="space-y-1">
-                  <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Expected Completion Date</label>
-                  <div className="px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm font-semibold text-gray-700 dark:text-gray-300">
-                    {expectedCompletion || "—"}
+              {/* Computed totals — always last so Total Repayable is the final field */}
+              {calc && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 border-t border-gray-100 dark:border-gray-800">
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-gray-500 dark:text-gray-400">EMI / Installment Amount</label>
+                    <div className="px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm font-semibold text-gray-700 dark:text-gray-300">
+                      {fmt(calc.emi)}
+                    </div>
                   </div>
-                  <p className="text-[11px] text-gray-400">Auto-calculated from first payment, frequency and installments</p>
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Total Interest</label>
+                    <div className="px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm font-semibold text-gray-700 dark:text-gray-300">
+                      {fmt(calc.totalInterest)}
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Total Repayable</label>
+                    <div className="px-3 py-2 rounded-xl border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 text-sm font-bold text-green-700 dark:text-green-400">
+                      {fmt(calc.totalRepayable)}
+                    </div>
+                  </div>
                 </div>
-              </div>
+              )}
             </Section>
 
-            {/* 5. Collateral & Guarantee */}
+            {/* 4. Collateral & Guarantee */}
             <Section title="Collateral & Guarantee" description="Security and guarantee details for this loan" defaultOpen={false}>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Input
@@ -895,7 +872,7 @@ export default function NewLoanPage() {
                       {[
                         { label: "Principal",       value: fmt(form.principal) },
                         { label: "Interest Rate",   value: `${form.monthlyRate}%/month` },
-                        ...(form.managementFeeMode === "per_installment" && form.managementFeeRate > 0
+                        ...(form.managementFeeMode === "per_installment" && parseFloat(form.managementFeeRate) > 0
                           ? [{ label: "Mgmt Fee Rate", value: `${form.managementFeeRate}%/month` }] : []),
                         { label: "Interest Method", value: form.interestMethod === "declining" ? "Declining Balance" : "Flat Rate" },
                       ].map((r) => (
@@ -975,18 +952,9 @@ export default function NewLoanPage() {
                         );
                       })()}
 
-                      {expectedCompletion && (
-                        <div className="pt-2 border-t border-gray-100 dark:border-gray-800 text-xs">
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">First Payment</span>
-                            <span className="font-medium text-gray-700 dark:text-gray-300">{form.firstPaymentDate}</span>
-                          </div>
-                          <div className="flex justify-between mt-1.5">
-                            <span className="text-gray-500">Est. Completion</span>
-                            <span className="font-medium text-gray-700 dark:text-gray-300">{expectedCompletion}</span>
-                          </div>
-                        </div>
-                      )}
+                      <div className="pt-2 border-t border-gray-100 dark:border-gray-800 text-xs text-gray-400 italic">
+                        First payment &amp; completion dates are calculated automatically when the loan is disbursed.
+                      </div>
                     </>
                   ) : (
                     <p className="text-xs text-gray-400 text-center py-4">Fill in loan details to see summary</p>

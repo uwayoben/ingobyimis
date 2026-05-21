@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getAuthUser } from "@/lib/auth";
 import { ok, notFound, unauthorized, forbidden, badRequest, serverError } from "@/lib/api-response";
-import { classifyLoan } from "@/lib/loan-schedule";
+import { classifyLoan, generateSchedule } from "@/lib/loan-schedule";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -66,10 +66,40 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     }
 
     if (body.status === "disbursed" || body.status === "active") {
-      updateData.disbursementDate   = new Date();
-      updateData.disbursedAmount    = body.disbursedAmount ?? loan.amount;
-      updateData.balanceOutstanding = body.disbursedAmount ?? loan.amount;
-      updateData.status             = "active";
+      const disbDate        = body.disbursementDate ? new Date(body.disbursementDate) : new Date();
+      const disburseAmount  = (body.disbursedAmount ?? loan.amount) as number;
+
+      // First payment = disbursement date + one repayment period + grace period
+      const firstPmt = new Date(disbDate);
+      firstPmt.setDate(firstPmt.getDate() + loan.repaymentFrequencyDays + (loan.gracePeriodDays ?? 0));
+
+      // Maturity date = first payment + (n-1) more periods
+      const maturityDate = new Date(firstPmt);
+      maturityDate.setDate(maturityDate.getDate() + (loan.totalInstallments - 1) * loan.repaymentFrequencyDays);
+
+      // Generate installment schedule from disbursement date
+      const schedule = generateSchedule(
+        disburseAmount,
+        Number(loan.annualInterestRate),
+        loan.interestMethod,
+        loan.totalInstallments,
+        firstPmt,
+        loan.repaymentFrequencyDays,
+        Number(loan.managementFeeRate),
+      );
+      const totalMgmtFeeScheduled  = schedule.reduce((s, r) => s + r.managementFeeDue, 0);
+      const totalInterestScheduled = schedule.reduce((s, r) => s + r.interestDue,      0);
+
+      updateData.disbursementDate       = disbDate;
+      updateData.disbursedAmount        = disburseAmount;
+      updateData.balanceOutstanding     = disburseAmount;
+      updateData.firstPaymentDate       = firstPmt;
+      updateData.agreedMaturityDate     = maturityDate;
+      updateData.nextPaymentDate        = firstPmt;
+      updateData.totalInterestScheduled = totalInterestScheduled;
+      updateData.totalMgmtFeeScheduled  = totalMgmtFeeScheduled;
+      updateData.status                 = "active";
+      updateData._schedule              = schedule; // passed into transaction below
     }
 
     if (body.status === "written_off") {
@@ -80,9 +110,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       updateData.isRestructured = body.isRestructured;
     }
 
-    // For disbursements, deduct from company account balance atomically
+    // For disbursements, deduct from company account balance and create schedule atomically
     if ((body.status === "disbursed" || body.status === "active") && auth.companyId) {
-      const disburseAmount = (body.disbursedAmount ?? loan.amount) as number;
+      const disburseAmount = updateData.disbursedAmount as number;
+      const schedule       = updateData._schedule as ReturnType<typeof generateSchedule> | undefined;
+      delete updateData._schedule;
+
       const updated = await prisma.$transaction(async (tx) => {
         const company = await tx.company.findUnique({
           where: { id: auth.companyId! },
@@ -104,6 +137,23 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
             createdById:   auth.userId,
           },
         });
+
+        // Replace any existing installments with the freshly generated schedule
+        if (schedule?.length) {
+          await tx.installment.deleteMany({ where: { loanId: id } });
+          await tx.installment.createMany({
+            data: schedule.map((row) => ({
+              loanId:           id,
+              installmentNo:    row.installmentNo,
+              dueDate:          row.dueDate,
+              principalDue:     row.principalDue,
+              interestDue:      row.interestDue,
+              managementFeeDue: row.managementFeeDue,
+              totalDue:         row.totalDue,
+            })),
+          });
+        }
+
         return tx.loan.update({ where: { id }, data: updateData });
       });
       return ok({ ...updated, annualInterestRate: Number(updated.annualInterestRate) });

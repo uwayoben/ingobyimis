@@ -206,7 +206,7 @@ model Loan {
   repaymentFrequencyDays  Int              // 1=daily 7=weekly 14=biweekly 30=monthly
   gracePeriodDays         Int              @default(0)
   firstPaymentDate        DateTime?
-  agreedMaturityDate      DateTime
+  agreedMaturityDate      DateTime?
 
   // Installment tracking
   totalInstallments       Int
@@ -232,7 +232,8 @@ model Loan {
   penaltyRatePerDay         Decimal          @db.Decimal(5,3) @default(0)   // % of overdue installment per day
   lastPenaltyCalculatedAt   DateTime?                                        // last time auto-penalty was applied
   managementFeeRate         Decimal          @db.Decimal(5,3) @default(0)   // % per period, charged like interest
-  totalMgmtFeeScheduled     Int              @default(0)                     // total management fee across all installments
+  totalInterestScheduled    Int              @default(0)                     // sum of interestDue from generated schedule
+  totalMgmtFeeScheduled     Int              @default(0)                     // sum of managementFeeDue from generated schedule
   amountRepaidMgmtFee       Int              @default(0)                     // management fee collected so far
 
   // Collateral

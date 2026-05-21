@@ -129,6 +129,7 @@ export interface Loan {
   amountRepaidMgmtFee: number;
   balanceOutstanding: number;
   managementFeeRate: number;
+  totalInterestScheduled?: number;
   totalMgmtFeeScheduled: number;
   arrearsStartDate?: string;
   daysOverdue: number;

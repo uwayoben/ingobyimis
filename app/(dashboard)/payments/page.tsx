@@ -37,15 +37,24 @@ function RecordPaymentForm({ onClose, onSaved }: { onClose: () => void; onSaved:
   const afterPenalty = amt - penalty;
   const periodsPerYear = 360 / (loan?.repaymentFrequencyDays ?? 30);
   const periodRate = loan ? (loan.annualInterestRate / 100 / periodsPerYear) : 0;
-  const remainingInt = loan ? Math.max(0, (loan.totalRepayable - loan.amount) - loan.amountRepaidInterest) : 0;
+  const totalMgmtFeeScheduled = loan?.totalMgmtFeeScheduled ?? 0;
+  const totalInterestScheduled = loan
+    ? ((loan.totalInterestScheduled ?? 0) > 0
+        ? loan.totalInterestScheduled!
+        : loan.totalRepayable - loan.amount - totalMgmtFeeScheduled)
+    : 0;
+  const remainingInt = loan ? Math.max(0, totalInterestScheduled - loan.amountRepaidInterest) : 0;
   const periodInt = loan && loan.balanceOutstanding > 0
     ? Math.round(loan.balanceOutstanding * periodRate)
     : remainingInt;
   const currentInt = Math.min(periodInt, remainingInt);
   const maxInt = remainingInt;
-  const isPayoffPreview = loan ? amt >= (loan.penaltyAmount + maxInt + loan.balanceOutstanding) : false;
-  const interest = loan ? Math.min(afterPenalty, isPayoffPreview ? maxInt : currentInt) : 0;
-  const principal = afterPenalty - interest;
+  const remainingMgmtFee = loan ? Math.max(0, (loan.totalMgmtFeeScheduled ?? 0) - (loan.amountRepaidMgmtFee ?? 0)) : 0;
+  const isPayoffPreview = loan ? amt >= (loan.penaltyAmount + remainingMgmtFee + maxInt + loan.balanceOutstanding) : false;
+  const mgmtFeePreview = loan ? Math.min(afterPenalty, isPayoffPreview ? remainingMgmtFee : Math.min(Math.round(loan.balanceOutstanding * (Number(loan.managementFeeRate ?? 0) / 100 / (360 / (loan.repaymentFrequencyDays ?? 30)))), remainingMgmtFee)) : 0;
+  const afterMgmtFee = afterPenalty - mgmtFeePreview;
+  const interest = loan ? Math.min(afterMgmtFee, isPayoffPreview ? maxInt : currentInt) : 0;
+  const principal = afterMgmtFee - interest;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

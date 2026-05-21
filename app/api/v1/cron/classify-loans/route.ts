@@ -85,49 +85,7 @@ export async function POST(request: Request) {
       const { loanClass, provisioningRate } = classifyLoan(daysOverdue);
       const provisionRequired = Math.round(loan.balanceOutstanding * provisioningRate / 100);
 
-      // ── Auto-penalty ────────────────────────────────────────────────
-      // Only applies when the loan has a penalty rate and there are overdue installments.
-      // We add the INCREMENT since the last time penalty was calculated to avoid
-      // double-counting when the job runs multiple times.
-      let newPenaltyAmount = loan.penaltyAmount;
-      let lastPenaltyCalculatedAt: Date | null = loan.lastPenaltyCalculatedAt;
-
-      if (rate > 0 && loan.installments.length > 0) {
-        const lastCalc = loan.lastPenaltyCalculatedAt
-          ? new Date(loan.lastPenaltyCalculatedAt)
-          : null;
-
-        // Skip if already ran today
-        const alreadyRanToday = lastCalc && lastCalc.toDateString() === today.toDateString();
-
-        if (!alreadyRanToday) {
-          let increment = 0;
-
-          for (const inst of loan.installments) {
-            const instDue = new Date(inst.dueDate);
-            instDue.setHours(0, 0, 0, 0);
-
-            // Total days this installment has been overdue as of today
-            const totalDaysLate = Math.max(0, Math.floor((today.getTime() - instDue.getTime()) / 86_400_000));
-
-            // Days it had already accrued penalty for as of the last run
-            const daysAlreadyCharged = lastCalc
-              ? Math.max(0, Math.floor((lastCalc.getTime() - instDue.getTime()) / 86_400_000))
-              : 0;
-
-            const newDays = totalDaysLate - daysAlreadyCharged;
-            if (newDays > 0) {
-              increment += Math.round(inst.totalDue * rate / 100 * newDays);
-            }
-          }
-
-          if (increment > 0) {
-            newPenaltyAmount += increment;
-          }
-          lastPenaltyCalculatedAt = today;
-        }
-      }
-
+      // Auto-penalty is disabled — penalties are added manually by staff.
       await prisma.loan.update({
         where: { id: loan.id },
         data: {
@@ -135,10 +93,8 @@ export async function POST(request: Request) {
           loanClass,
           provisioningRate,
           provisionRequired,
-          status:                  newStatus,
+          status:          newStatus,
           arrearsStartDate,
-          penaltyAmount:           newPenaltyAmount,
-          lastPenaltyCalculatedAt,
         },
       });
       updated++;
