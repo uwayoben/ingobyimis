@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import {
   ArrowLeft, CheckCircle2, XCircle, Printer, ArrowDownToLine, Loader2,
   AlertTriangle, Banknote, TrendingDown, CreditCard, ArrowDownUp, FileText, ExternalLink,
-  MinusCircle, TrendingUp, Upload, X, Receipt,
+  MinusCircle, TrendingUp, Upload, X, Receipt, Trash2,
 } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
@@ -769,6 +769,9 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
   const [showTopUpModal,    setShowTopUpModal]    = useState(false);
   const [showContractModal, setShowContractModal] = useState(false);
   const [disburseDate,      setDisburseDate]      = useState(() => new Date().toISOString().slice(0, 10));
+  const [showDeleteModal,   setShowDeleteModal]   = useState(false);
+  const [deleting,          setDeleting]          = useState(false);
+  const [deleteError,       setDeleteError]       = useState("");
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -817,6 +820,21 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
       setActionError("Network error.");
     } finally {
       setActioning(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      const res  = await apiFetch(`/api/v1/loans/${id}`, { method: "DELETE" });
+      const json = await res.json();
+      if (!res.ok) { setDeleteError(json.error || "Delete failed."); return; }
+      router.push("/loans");
+    } catch {
+      setDeleteError("Network error.");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -914,6 +932,11 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
             <Button size="sm" icon={<ArrowDownToLine className="w-4 h-4" />} onClick={() => setActionModal("disburse")}>Disburse</Button>
           )}
           <Button variant="outline" size="sm" icon={<FileText className="w-4 h-4" />} onClick={() => setShowContractModal(true)}>Loan Agreement</Button>
+          {canApprove && (
+            <Button variant="danger" size="sm" icon={<Trash2 className="w-4 h-4" />} onClick={() => { setDeleteError(""); setShowDeleteModal(true); }}>
+              Delete
+            </Button>
+          )}
         </div>
       </div>
 
@@ -1584,6 +1607,31 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
               onClick={() => actionModal && handleAction(actionModal)}
             >
               {actionModal === "approve" ? "Confirm Approval" : actionModal === "reject" ? "Confirm Reject" : "Confirm Disburse"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ── Delete Confirmation Modal ─────────────────────────────────── */}
+      <Modal isOpen={showDeleteModal} onClose={() => setShowDeleteModal(false)} title="Delete Loan" size="sm">
+        <div className="p-6 space-y-4">
+          {deleteError && (
+            <p className="text-xs text-red-600 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">{deleteError}</p>
+          )}
+          <div className="flex items-start gap-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl">
+            <Trash2 className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-red-700 dark:text-red-300 mb-1">This action cannot be undone</p>
+              <p className="text-xs text-red-600 dark:text-red-400">
+                Loan <span className="font-mono font-bold">{loan.id.toUpperCase()}</span> and all its installments, payments, and documents will be permanently deleted.
+                {loan.disbursedAmount > 0 && " The disbursed amount will be reversed in the company ledger."}
+              </p>
+            </div>
+          </div>
+          <div className="flex justify-end gap-3">
+            <Button variant="outline" onClick={() => setShowDeleteModal(false)}>Cancel</Button>
+            <Button variant="danger" loading={deleting} icon={<Trash2 className="w-4 h-4" />} onClick={handleDelete}>
+              Delete Permanently
             </Button>
           </div>
         </div>

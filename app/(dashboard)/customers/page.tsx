@@ -37,6 +37,9 @@ export default function CustomersPage() {
   const [deleteTarget, setDeleteTarget] = useState<Customer | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [showDeleteAll,  setShowDeleteAll]  = useState(false);
+  const [deletingAll,    setDeletingAll]    = useState(false);
+  const [deleteAllError, setDeleteAllError] = useState("");
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
 
   useEffect(() => { setIsSuperAdmin(getStoredRole() === "super_admin"); }, []);
@@ -80,6 +83,22 @@ export default function CustomersPage() {
       setDeleteError("Network error. Please try again.");
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const handleDeleteAll = async () => {
+    setDeletingAll(true);
+    setDeleteAllError("");
+    try {
+      const res  = await apiFetch("/api/v1/customers/bulk-delete", { method: "DELETE" });
+      const json = await res.json();
+      if (!res.ok) { setDeleteAllError(json.error || "Delete failed."); return; }
+      setShowDeleteAll(false);
+      fetchCustomers();
+    } catch {
+      setDeleteAllError("Network error.");
+    } finally {
+      setDeletingAll(false);
     }
   };
 
@@ -131,6 +150,14 @@ export default function CustomersPage() {
           >
             <Upload className="w-4 h-4" /> Import
           </button>
+          {customers.length > 0 && (
+            <button
+              onClick={() => { setDeleteAllError(""); setShowDeleteAll(true); }}
+              className="bg-red-500/80 hover:bg-red-500 text-white text-sm font-semibold px-4 py-2 rounded-xl inline-flex items-center gap-1.5 transition-colors"
+            >
+              <Trash2 className="w-4 h-4" /> Delete All
+            </button>
+          )}
         </div>
       </motion.div>
 
@@ -284,6 +311,43 @@ export default function CustomersPage() {
               >
                 {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                 {deleting ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete All confirmation */}
+      {showDeleteAll && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-2xl p-7 max-w-sm w-full mx-4">
+            <div className="flex items-center justify-center w-14 h-14 rounded-full bg-red-100 dark:bg-red-900/30 mx-auto mb-4">
+              <Trash2 className="w-7 h-7 text-red-600 dark:text-red-400" />
+            </div>
+            <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100 text-center mb-1">Delete All Customers?</h2>
+            <p className="text-sm text-gray-500 dark:text-gray-400 text-center mb-2">
+              All <span className="font-semibold text-gray-800 dark:text-gray-200">{customers.length}</span> customers and all their loans, payments, and documents will be permanently deleted. This cannot be undone.
+            </p>
+            {deleteAllError && (
+              <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/40 rounded-lg px-3 py-2 mb-3 text-center">
+                {deleteAllError}
+              </p>
+            )}
+            <div className="flex gap-3 mt-4">
+              <button
+                onClick={() => { setShowDeleteAll(false); setDeleteAllError(""); }}
+                disabled={deletingAll}
+                className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 dark:border-gray-700 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteAll}
+                disabled={deletingAll}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white text-sm font-semibold transition-colors"
+              >
+                {deletingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                {deletingAll ? "Deleting…" : "Delete All"}
               </button>
             </div>
           </div>

@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Search, FileText, Loader2, AlertTriangle, CheckCircle2, Clock, Banknote, ChevronDown, Upload } from "lucide-react";
+import { Plus, Search, FileText, Loader2, AlertTriangle, CheckCircle2, Clock, Banknote, ChevronDown, Upload, Trash2 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -75,7 +75,10 @@ export default function LoansPage() {
   const [search, setSearch]     = useState("");
   const [tab, setTab]           = useState<LoanStatus | "all">("all");
   const [classFilter, setClassFilter] = useState("All Classes");
-  const [showImport, setShowImport]   = useState(false);
+  const [showImport,     setShowImport]     = useState(false);
+  const [showDeleteAll,  setShowDeleteAll]  = useState(false);
+  const [deletingAll,    setDeletingAll]    = useState(false);
+  const [deleteAllError, setDeleteAllError] = useState("");
 
   const fetchLoans = useCallback(async () => {
     setLoading(true);
@@ -97,6 +100,22 @@ export default function LoansPage() {
     const t = setTimeout(fetchLoans, search ? 300 : 0);
     return () => clearTimeout(t);
   }, [fetchLoans]);
+
+  const handleDeleteAll = async () => {
+    setDeletingAll(true);
+    setDeleteAllError("");
+    try {
+      const res  = await apiFetch("/api/v1/loans/bulk-delete", { method: "DELETE" });
+      const json = await res.json();
+      if (!res.ok) { setDeleteAllError(json.error || "Delete failed."); return; }
+      setShowDeleteAll(false);
+      fetchLoans();
+    } catch {
+      setDeleteAllError("Network error.");
+    } finally {
+      setDeletingAll(false);
+    }
+  };
 
   const displayed = classFilter === "All Classes"
     ? loans
@@ -159,6 +178,14 @@ export default function LoansPage() {
               >
                 <Upload className="w-4 h-4" /> Import
               </button>
+              {["managing_director", "super_admin"].includes(role) && total > 0 && (
+                <button
+                  onClick={() => { setDeleteAllError(""); setShowDeleteAll(true); }}
+                  className="bg-red-500/80 hover:bg-red-500 text-white text-sm font-semibold px-4 py-2 rounded-xl inline-flex items-center gap-1.5 transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" /> Delete All
+                </button>
+              )}
               <Link
                 href="/loans/new"
                 className="bg-white text-green-700 hover:bg-green-50 shadow-sm text-sm font-semibold px-4 py-2 rounded-xl inline-flex items-center gap-1.5 transition-colors"
@@ -422,6 +449,40 @@ export default function LoansPage() {
             onClose={() => setShowImport(false)}
             onImported={() => { setShowImport(false); fetchLoans(); }}
           />
+        </div>
+      </Modal>
+
+      {/* ── Delete All Confirmation Modal ─────────────────────────────── */}
+      <Modal isOpen={showDeleteAll} onClose={() => setShowDeleteAll(false)} title="Delete All Loans" size="sm">
+        <div className="p-6 space-y-4">
+          {deleteAllError && (
+            <p className="text-xs text-red-600 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">{deleteAllError}</p>
+          )}
+          <div className="flex items-start gap-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl">
+            <Trash2 className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-red-700 dark:text-red-300 mb-1">Delete all {total} loan{total !== 1 ? "s" : ""}?</p>
+              <p className="text-xs text-red-600 dark:text-red-400">
+                All loans, installments, payments, and documents will be permanently deleted. This cannot be undone.
+              </p>
+            </div>
+          </div>
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={() => setShowDeleteAll(false)}
+              className="px-4 py-2 rounded-xl border border-gray-200 dark:border-gray-700 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleDeleteAll}
+              disabled={deletingAll}
+              className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-semibold inline-flex items-center gap-2 transition-colors"
+            >
+              {deletingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+              {deletingAll ? "Deleting…" : "Delete All Permanently"}
+            </button>
+          </div>
         </div>
       </Modal>
     </div>

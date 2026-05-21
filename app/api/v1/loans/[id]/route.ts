@@ -166,3 +166,49 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     return serverError();
   }
 }
+
+export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const auth = getAuthUser(request);
+    if (!auth) return unauthorized();
+    if (!["managing_director", "super_admin"].includes(auth.role)) {
+      return forbidden("Only a managing director can delete loans.");
+    }
+
+    const { id } = await params;
+
+    const loan = await prisma.loan.findFirst({ where: { id, companyId: auth.companyId! } });
+    if (!loan) return notFound("Loan not found.");
+
+    // Reverse disbursement ledger entry if the loan was disbursed
+    await prisma.$transaction(async (tx) => {
+      if (loan.disbursedAmount > 0 && auth.companyId) {
+        const company = await tx.company.findUnique({
+          where: { id: auth.companyId },
+          select: { accountBalance: true },
+        });
+        const before = company?.accountBalance ?? 0;
+        const after  = before + loan.disbursedAmount;
+        await tx.company.update({ where: { id: auth.companyId }, data: { accountBalance: after } });
+        await tx.ledgerEntry.create({
+          data: {
+            companyId:     auth.companyId,
+            type:          "withdrawal",
+            amount:        loan.disbursedAmount,
+            balanceBefore: before,
+            balanceAfter:  after,
+            description:   `Loan deletion reversal — ${id}`,
+            referenceId:   id,
+            createdById:   auth.userId,
+          },
+        });
+      }
+      await tx.loan.delete({ where: { id } });
+    });
+
+    return ok({ message: "Loan deleted successfully." });
+  } catch (e) {
+    console.error(e);
+    return serverError();
+  }
+}

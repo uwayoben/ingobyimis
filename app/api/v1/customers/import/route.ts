@@ -17,7 +17,7 @@ const rowSchema = z.object({
   phone: z.string().min(1, "phone is required"),
   email: z.string().email().optional().or(z.literal("")).or(z.null()).transform((v) => v || null),
   maritalStatus: z.enum(["Single", "Married", "Divorced", "Widowed"], { error: "maritalStatus must be Single, Married, Divorced, or Widowed" }),
-  employmentStatus: z.enum(["Employed", "Self-employed", "Unemployed", "Retired"], { error: "employmentStatus must be Employed, Self-employed, Unemployed, or Retired" }),
+  employmentStatus: z.string().min(1, "employmentStatus is required"),
   employerName: z.string().optional().nullable().transform((v) => v || null),
   relationshipWithNdfsp: z.string().optional().nullable().transform((v) => v || null),
   spouseName: z.string().optional().nullable().transform((v) => v || null),

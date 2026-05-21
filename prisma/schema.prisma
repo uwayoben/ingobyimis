@@ -309,7 +309,7 @@ model LoanDocument {
 model Payment {
   id           String        @id @default(cuid())
   loanId       String
-  loan         Loan          @relation(fields: [loanId], references: [id])
+  loan         Loan          @relation(fields: [loanId], references: [id], onDelete: Cascade)
   customerId   String
   customer     Customer      @relation(fields: [customerId], references: [id])
   amount         Int

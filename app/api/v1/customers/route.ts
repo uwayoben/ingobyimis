@@ -17,7 +17,7 @@ const createSchema = z.object({
   email: z.string().email().optional().or(z.literal("")),
   maritalStatus: z.enum(["Single", "Married", "Divorced", "Widowed"]),
   employerName: z.string().optional(),
-  employmentStatus: z.enum(["Employed", "Self-employed", "Unemployed", "Retired"]),
+  employmentStatus: z.string().min(1),
   relationshipWithNdfsp: z.string().optional(),
   spouseName: z.string().optional(),
   spousePhone: z.string().optional(),
