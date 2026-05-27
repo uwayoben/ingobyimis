@@ -332,10 +332,10 @@ export const ASSETS: Asset[] = [
 ];
 
 export const EXPENSES: Expense[] = [
-  { id: "e1", category: "Staff Salaries", description: "October 2024 payroll", amount: 8_500_000, date: "2024-10-01", companyId: "c1" },
-  { id: "e2", category: "Rent", description: "Office rent - October", amount: 1_200_000, date: "2024-10-01", companyId: "c1" },
-  { id: "e3", category: "Utilities", description: "Electricity & Internet", amount: 280_000, date: "2024-10-05", companyId: "c1" },
-  { id: "e4", category: "Marketing", description: "Social media campaign", amount: 450_000, date: "2024-10-08", companyId: "c1" },
+  { id: "e1", category: "Administrative Expenses", description: "October 2024 payroll", amount: 8_500_000, date: "2024-10-01", companyId: "c1" },
+  { id: "e2", category: "Administrative Expenses", description: "Office rent - October", amount: 1_200_000, date: "2024-10-01", companyId: "c1" },
+  { id: "e3", category: "Non Operating Expenses", description: "Electricity & Internet", amount: 280_000, date: "2024-10-05", companyId: "c1" },
+  { id: "e4", category: "Personal Expenses", description: "Social media campaign", amount: 450_000, date: "2024-10-08", companyId: "c1" },
 ];
 
 export function generateAmortization(

@@ -431,9 +431,9 @@ async function main() {
   await prisma.expense.createMany({
     skipDuplicates: true,
     data: [
-      { category: "Staff Salaries", description: "October 2024 payroll", amount: 8500000, date: new Date("2024-10-01"), companyId: ingobyi.id },
-      { category: "Rent", description: "Office rent - October", amount: 1200000, date: new Date("2024-10-01"), companyId: ingobyi.id },
-      { category: "Utilities", description: "Electricity & Internet", amount: 280000, date: new Date("2024-10-05"), companyId: ingobyi.id },
+      { category: "Administrative Expenses", description: "October 2024 payroll", amount: 8500000, date: new Date("2024-10-01"), companyId: ingobyi.id },
+      { category: "Administrative Expenses", description: "Office rent - October", amount: 1200000, date: new Date("2024-10-01"), companyId: ingobyi.id },
+      { category: "Non Operating Expenses", description: "Electricity & Internet", amount: 280000, date: new Date("2024-10-05"), companyId: ingobyi.id },
     ],
   });
 

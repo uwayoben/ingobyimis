@@ -53,8 +53,9 @@ interface Asset {
 }
 
 const EXPENSE_CATEGORIES = [
-  "Staff Salaries","Rent","Utilities","Marketing",
-  "Office Supplies","Transport","Maintenance","Other",
+  "Personal Expenses",
+  "Administrative Expenses",
+  "Non Operating Expenses",
 ];
 const ASSET_CATEGORIES = ["Furniture","Equipment","Vehicles","Electronics","Buildings","Other"];
 

@@ -35,7 +35,7 @@ function buildSchedule(
 ): Row[] {
   if (principal <= 0 || installments <= 0) return [];
 
-  const periodsPerYear = 365 / freqDays;
+  const periodsPerYear = 360 / freqDays;
   const periodRate     = annualRate / 100 / periodsPerYear;
 
   let emi: number;
@@ -62,7 +62,7 @@ function buildSchedule(
     let princ: number;
 
     if (method === "flat") {
-      interest = Math.round((principal * periodRate * installments) / installments);
+      interest = Math.round(principal * periodRate);
       princ    = isLast ? balance : Math.round(principal / installments);
     } else {
       interest = Math.round(balance * periodRate);
@@ -77,7 +77,7 @@ function buildSchedule(
       openingBalance: Math.round(balance),
       principal: princ,
       interest,
-      emi: princ + interest,
+      emi,          // always the fixed constant — no per-row rounding drift
       closingBalance: closing,
     });
 
