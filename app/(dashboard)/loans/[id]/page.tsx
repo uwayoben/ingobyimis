@@ -23,6 +23,168 @@ function formatCurrency(n: number) {
   return "RWF " + Math.round(n).toLocaleString();
 }
 
+function openInstallmentInvoice(
+  row: Installment,
+  loan: { id: string; amount: number; annualInterestRate: number; totalInstallments: number; customer?: { names?: string; nationalId?: string; phone?: string; province?: string; district?: string } | null; customerName?: string },
+  companyName: string,
+) {
+  const customerName = loan.customer?.names ?? (loan as any).customerName ?? "—";
+  const nationalId   = loan.customer?.nationalId ?? "—";
+  const phone        = loan.customer?.phone ?? "—";
+  const address      = [loan.customer?.district, loan.customer?.province].filter(Boolean).join(", ") || "—";
+  const balance      = Math.max(0, row.totalDue - row.amountPaid);
+  const today        = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+  const dueDate      = new Date(row.dueDate).toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+  const refNo        = `INV-${loan.id.toUpperCase()}-${String(row.installmentNo).padStart(3, "0")}`;
+
+  const statusStyles: Record<string, string> = {
+    paid:    "background:#dcfce7;color:#166534",
+    pending: "background:#f3f4f6;color:#374151",
+    overdue: "background:#fee2e2;color:#991b1b",
+    partial: "background:#dbeafe;color:#1e40af",
+  };
+  const statusStyle = statusStyles[row.status] ?? statusStyles.pending;
+
+  const mgmtFeeRow = row.managementFeeDue > 0
+    ? `<tr style="background:#fff"><td style="padding:10px 14px;color:#6b7280">Management Fee</td><td style="padding:10px 14px;text-align:right;font-weight:500">RWF ${row.managementFeeDue.toLocaleString()}</td></tr>`
+    : "";
+
+  const paidRow = row.amountPaid > 0
+    ? `<tr style="background:#f0fdf4"><td style="padding:10px 14px;color:#16a34a;font-weight:600">Amount Paid</td><td style="padding:10px 14px;text-align:right;color:#16a34a;font-weight:700">− RWF ${row.amountPaid.toLocaleString()}</td></tr>`
+    : "";
+
+  const overdueNotice = row.status === "overdue"
+    ? `<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:12px 16px;font-size:11px;color:#92400e;line-height:1.6;margin-bottom:24px">
+        <strong>⚠ Overdue Notice:</strong> This installment is past its due date of ${dueDate}. Please make payment immediately to avoid additional penalties. Contact us if you need assistance.
+       </div>`
+    : `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px 16px;font-size:11px;color:#166534;line-height:1.6;margin-bottom:24px">
+        <strong>Payment Instructions:</strong> Please pay by <strong>${dueDate}</strong>. You can pay via bank transfer, mobile money, or visit our office. Include the reference number <strong>${refNo}</strong> in your payment.
+       </div>`;
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>${refNo}</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#1a1a1a;background:#fff}
+    .page{max-width:700px;margin:0 auto;padding:40px}
+    .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:32px;padding-bottom:24px;border-bottom:3px solid #166534}
+    .co-name{font-size:22px;font-weight:700;color:#166534}
+    .co-sub{font-size:11px;color:#888;margin-top:3px}
+    .inv-title h1{font-size:26px;font-weight:800;color:#166534;letter-spacing:-0.5px;text-align:right}
+    .inv-title p{font-size:11px;color:#666;text-align:right;margin-top:3px;line-height:1.5}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px}
+    .box{background:#f8fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px}
+    .box h3{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#9ca3af;margin-bottom:8px}
+    .box p{font-size:12px;line-height:1.7;color:#374151}
+    .box strong{color:#111}
+    .inst-line{display:flex;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap}
+    .inst-badge{background:#166534;color:#fff;padding:5px 14px;border-radius:20px;font-size:11px;font-weight:700}
+    .due-text{font-size:12px;color:#6b7280}
+    .status-pill{padding:4px 10px;border-radius:12px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px}
+    table.bk{width:100%;border-collapse:collapse;margin-bottom:6px}
+    table.bk td{padding:10px 14px}
+    table.bk tr:nth-child(odd) td{background:#f9fafb}
+    .lbl{color:#6b7280}
+    .val{text-align:right;font-weight:500;color:#111}
+    .total-row td{background:#166534!important;color:#fff!important;font-size:14px;font-weight:700}
+    .bal-row td{background:#f0fdf4!important;color:#166534!important;font-size:14px;font-weight:800}
+    .footer{margin-top:28px;padding-top:20px;border-top:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:flex-end}
+    .sig{text-align:center}
+    .sig-line{border-top:1px solid #d1d5db;width:160px;margin:30px auto 4px}
+    .sig-label{font-size:10px;color:#9ca3af}
+    .toolbar{position:fixed;top:16px;right:16px;display:flex;gap:8px}
+    .print-btn{background:#166534;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer}
+    .dl-btn{background:#fff;color:#166534;border:2px solid #166534;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer}
+    @media print{.toolbar{display:none}.page{padding:20px}}
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <button class="dl-btn" onclick="downloadInvoice()">⬇ Download</button>
+    <button class="print-btn" onclick="window.print()">🖨 Print / PDF</button>
+  </div>
+  <div class="page">
+    <div class="header">
+      <div>
+        <div class="co-name">${companyName}</div>
+        <div class="co-sub">Microfinance Institution</div>
+      </div>
+      <div class="inv-title">
+        <h1>PAYMENT NOTICE</h1>
+        <p>Ref: <strong>${refNo}</strong></p>
+        <p>Issued: ${today}</p>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="box">
+        <h3>Billed To</h3>
+        <p><strong>${customerName}</strong></p>
+        <p>National ID: ${nationalId}</p>
+        <p>Phone: ${phone}</p>
+        <p>Address: ${address}</p>
+      </div>
+      <div class="box">
+        <h3>Loan Details</h3>
+        <p><strong>Loan ID:</strong> ${loan.id.toUpperCase()}</p>
+        <p><strong>Loan Amount:</strong> RWF ${loan.amount.toLocaleString()}</p>
+        <p><strong>Interest Rate:</strong> ${loan.annualInterestRate}% p.a.</p>
+        <p><strong>Total Installments:</strong> ${loan.totalInstallments}</p>
+      </div>
+    </div>
+
+    <div class="inst-line">
+      <span class="inst-badge">Installment ${row.installmentNo} of ${loan.totalInstallments}</span>
+      <span class="due-text">Due Date: <strong>${dueDate}</strong></span>
+      <span class="status-pill" style="${statusStyle}">${row.status}</span>
+    </div>
+
+    <table class="bk">
+      <tr style="background:#fff"><td class="lbl">Principal</td><td class="val">RWF ${row.principalDue.toLocaleString()}</td></tr>
+      <tr><td class="lbl">Interest</td><td class="val">RWF ${row.interestDue.toLocaleString()}</td></tr>
+      ${mgmtFeeRow}
+      <tr class="total-row"><td>TOTAL DUE</td><td class="val">RWF ${row.totalDue.toLocaleString()}</td></tr>
+      ${paidRow}
+      <tr class="bal-row"><td>BALANCE DUE</td><td class="val">RWF ${balance.toLocaleString()}</td></tr>
+    </table>
+
+    <br/>
+    ${overdueNotice}
+
+    <div class="footer">
+      <div>
+        <p style="font-size:11px;color:#6b7280">Generated by ${companyName} MIS &nbsp;·&nbsp; ${today}</p>
+        <p style="font-size:10px;color:#9ca3af;margin-top:2px">This is an automated payment notice. Not a receipt.</p>
+      </div>
+      <div class="sig">
+        <div class="sig-line"></div>
+        <div class="sig-label">Authorised Signature</div>
+      </div>
+    </div>
+  </div>
+  <script>
+    function downloadInvoice(){
+      var blob=new Blob([document.documentElement.outerHTML],{type:'text/html'});
+      var url=URL.createObjectURL(blob);
+      var a=document.createElement('a');
+      a.href=url;a.download='${refNo}.html';
+      document.body.appendChild(a);a.click();
+      document.body.removeChild(a);URL.revokeObjectURL(url);
+    }
+    window.onload=()=>window.print();
+  </script>
+</body>
+</html>`;
+
+  const w = window.open("", "_blank", "width=800,height=700");
+  if (!w) return;
+  w.document.write(html);
+  w.document.close();
+}
+
 function loanPeriodRate(loan: Loan): number {
   return loan.annualInterestRate / 100 / (360 / loan.repaymentFrequencyDays);
 }
@@ -1269,8 +1431,8 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
               {(() => {
                 const hasMgmtFee = loan.managementFeeRate > 0;
                 const headers = hasMgmtFee
-                  ? ["#", "Due Date", "Principal", "Mgmt Fee", "Interest", "Total Due", "Paid", "Status"]
-                  : ["#", "Due Date", "Principal", "Interest", "Total Due", "Paid", "Status"];
+                  ? ["#", "Due Date", "Principal", "Mgmt Fee", "Interest", "Total Due", "Paid", "Status", ""]
+                  : ["#", "Due Date", "Principal", "Interest", "Total Due", "Paid", "Status", ""];
                 return (
                   <table className="w-full">
                     <thead>
@@ -1311,6 +1473,15 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                             <span className={cn("inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold capitalize", INSTALLMENT_STATUS_COLOR[row.status])}>
                               {row.status}
                             </span>
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <button
+                              onClick={() => openInstallmentInvoice(row, loan, companyName)}
+                              title="Download invoice"
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+                            >
+                              <Receipt className="w-3 h-3" /> Invoice
+                            </button>
                           </td>
                         </tr>
                       ))}
