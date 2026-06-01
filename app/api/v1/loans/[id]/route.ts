@@ -27,8 +27,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 
     return ok({
       ...loan,
-      annualInterestRate: Number(loan.annualInterestRate),
-      provisioningRate:   Number(loan.provisioningRate),
+      annualInterestRate:  Number(loan.annualInterestRate),
+      provisioningRate:    Number(loan.provisioningRate),
+      managementFeeRate:   Number(loan.managementFeeRate),
+      processingFeeRate:   Number((loan as any).processingFeeRate ?? 0),
       installmentsOutstanding: loan.totalInstallments - loan.installmentsPaid,
     });
   } catch (e) {
@@ -58,7 +60,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       return forbidden("You do not have permission to disburse loans.");
     }
 
-    const updateData: Record<string, unknown> = { status: body.status };
+    const updateData: Record<string, unknown> = {};
+    if (body.status !== undefined) updateData.status = body.status;
+
+    if (body.signedContractUrl !== undefined) {
+      updateData.signedContractUrl = body.signedContractUrl;
+    }
 
     if (body.status === "approved") {
       updateData.approvedById = auth.userId;
@@ -86,9 +93,11 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         firstPmt,
         loan.repaymentFrequencyDays,
         Number(loan.managementFeeRate),
+        Number((loan as any).processingFeeRate ?? 0),
       );
-      const totalMgmtFeeScheduled  = schedule.reduce((s, r) => s + r.managementFeeDue, 0);
-      const totalInterestScheduled = schedule.reduce((s, r) => s + r.interestDue,      0);
+      const totalMgmtFeeScheduled        = schedule.reduce((s, r) => s + r.managementFeeDue, 0);
+      const totalProcessingFeeScheduled  = schedule.reduce((s, r) => s + r.processingFeeDue, 0);
+      const totalInterestScheduled       = schedule.reduce((s, r) => s + r.interestDue,      0);
 
       updateData.disbursementDate       = disbDate;
       updateData.disbursedAmount        = disburseAmount;
@@ -96,8 +105,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       updateData.firstPaymentDate       = firstPmt;
       updateData.agreedMaturityDate     = maturityDate;
       updateData.nextPaymentDate        = firstPmt;
-      updateData.totalInterestScheduled = totalInterestScheduled;
-      updateData.totalMgmtFeeScheduled  = totalMgmtFeeScheduled;
+      updateData.totalInterestScheduled      = totalInterestScheduled;
+      updateData.totalMgmtFeeScheduled       = totalMgmtFeeScheduled;
+      updateData.totalProcessingFeeScheduled = totalProcessingFeeScheduled;
       updateData.status                 = "active";
       updateData._schedule              = schedule; // passed into transaction below
     }
@@ -149,6 +159,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
               principalDue:     row.principalDue,
               interestDue:      row.interestDue,
               managementFeeDue: row.managementFeeDue,
+              processingFeeDue: row.processingFeeDue,
               totalDue:         row.totalDue,
             })),
           });

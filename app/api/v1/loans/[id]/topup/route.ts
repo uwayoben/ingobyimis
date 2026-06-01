@@ -37,15 +37,17 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       return badRequest("This loan has no outstanding balance to top up.");
     }
 
-    const effectiveRate        = d.newAnnualInterestRate ?? Number(loan.annualInterestRate);
-    const effectiveMgmtFeeRate = Number(loan.managementFeeRate ?? 0);
-    const outstandingPrincipal = loan.balanceOutstanding;
-    const newFirstPaymentDate  = new Date(d.newFirstPaymentDate);
-    const n                    = d.newTotalInstallments;
-    const periodsPerYear       = 360 / loan.repaymentFrequencyDays;
-    const interestPeriodRate   = effectiveRate        / 100 / periodsPerYear;
-    const mgmtFeePeriodRate    = effectiveMgmtFeeRate / 100 / periodsPerYear;
-    const periodRate           = interestPeriodRate + mgmtFeePeriodRate;
+    const effectiveRate         = d.newAnnualInterestRate ?? Number(loan.annualInterestRate);
+    const effectiveMgmtFeeRate  = Number(loan.managementFeeRate ?? 0);
+    const effectiveProcFeeRate  = Number((loan as any).processingFeeRate ?? 0);
+    const outstandingPrincipal  = loan.balanceOutstanding;
+    const newFirstPaymentDate   = new Date(d.newFirstPaymentDate);
+    const n                     = d.newTotalInstallments;
+    const periodsPerYear        = 360 / loan.repaymentFrequencyDays;
+    const interestPeriodRate    = effectiveRate        / 100 / periodsPerYear;
+    const mgmtFeePeriodRate     = effectiveMgmtFeeRate / 100 / periodsPerYear;
+    const procFeePeriodRate     = effectiveProcFeeRate / 100 / periodsPerYear;
+    const periodRate            = interestPeriodRate + mgmtFeePeriodRate + procFeePeriodRate;
 
     // ── Determine new principal and actual cash disbursed based on top-up type ──
     // addon:    new principal = outstanding + top-up; client receives top-up in cash.
@@ -71,7 +73,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (loan.interestMethod === "flat") {
       const totalInterest  = newPrincipal * interestPeriodRate * n;
       const totalMgmtFee   = newPrincipal * mgmtFeePeriodRate  * n;
-      newTotalRepayable    = Math.round(newPrincipal + totalInterest + totalMgmtFee);
+      const totalProcFee   = newPrincipal * procFeePeriodRate  * n;
+      newTotalRepayable    = Math.round(newPrincipal + totalInterest + totalMgmtFee + totalProcFee);
       newInstallmentAmount = Math.round(newTotalRepayable / n);
     } else {
       const exactEmi       = periodRate === 0
@@ -92,9 +95,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       newFirstPaymentDate,
       loan.repaymentFrequencyDays,
       effectiveMgmtFeeRate,
+      effectiveProcFeeRate,
     );
-    const newTotalMgmtFeeScheduled    = newSchedule.reduce((s, r) => s + r.managementFeeDue, 0);
-    const newTotalInterestScheduled   = newSchedule.reduce((s, r) => s + r.interestDue,      0);
+    const newTotalMgmtFeeScheduled        = newSchedule.reduce((s, r) => s + r.managementFeeDue, 0);
+    const newTotalProcessingFeeScheduled  = newSchedule.reduce((s, r) => s + r.processingFeeDue, 0);
+    const newTotalInterestScheduled       = newSchedule.reduce((s, r) => s + r.interestDue,      0);
 
     const { loanClass, provisioningRate } = classifyLoan(0); // reset to Normal after top-up
     const provisionRequired = Math.round(newPrincipal * provisioningRate / 100);
@@ -114,6 +119,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           principalDue:     row.principalDue,
           interestDue:      row.interestDue,
           managementFeeDue: row.managementFeeDue,
+          processingFeeDue: row.processingFeeDue,
           totalDue:         row.totalDue,
         })),
       });
@@ -177,9 +183,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           // Reset repaid trackers so interest-remaining formula works cleanly with the new schedule
           amountRepaidPrincipal:  0,
           amountRepaidInterest:   0,
-          amountRepaidMgmtFee:       0,
-          totalInterestScheduled:    newTotalInterestScheduled,
-          totalMgmtFeeScheduled:     newTotalMgmtFeeScheduled,
+          amountRepaidMgmtFee:           0,
+          amountRepaidProcessingFee:     0,
+          totalInterestScheduled:        newTotalInterestScheduled,
+          totalMgmtFeeScheduled:         newTotalMgmtFeeScheduled,
+          totalProcessingFeeScheduled:   newTotalProcessingFeeScheduled,
           nextPaymentDate:       newFirstPaymentDate,
           nextPaymentAmount:     newInstallmentAmount,
           agreedMaturityDate:    newMaturityDate,

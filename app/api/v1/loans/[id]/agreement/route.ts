@@ -60,14 +60,35 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const monthlyRate   = Number(loan.annualInterestRate) / 12;
   const annualRate    = Number(loan.annualInterestRate);
 
-  const processingFee = loan.fees.find(
+  const mgmtFeeRate      = Number(loan.managementFeeRate ?? 0);
+  const mgmtFeeMonthly   = mgmtFeeRate / 12;
+  const procFeeRateNum   = Number((loan as any).processingFeeRate ?? 0);
+  const procFeeMonthly   = procFeeRateNum / 12;
+
+  // One-time fees from LoanFee records
+  const oneTimeProcessingFee = loan.fees.find(
     (f) => f.name.toLowerCase().includes("process") || f.name.toLowerCase().includes("admin")
   );
-  const processingFeeText = processingFee
-    ? processingFee.type === "percentage"
-      ? `${Number(processingFee.value)}%`
-      : `RWF ${fmt(Number(processingFee.value))}`
-    : "N/A";
+  const oneTimeMgmtFee = loan.fees.find(
+    (f) => f.name.toLowerCase().includes("management") || f.name.toLowerCase().includes("mgmt")
+  );
+  const applicationFee = loan.fees.find(
+    (f) => f.name.toLowerCase().includes("application")
+  );
+
+  function feeText(f: { type: string; value: { toString(): string } } | undefined, principal: number): string {
+    if (!f) return "N/A";
+    const val = Number(f.value);
+    if (f.type === "percentage") return `${val}% (RWF ${fmt(Math.round(principal * val / 100))})`;
+    return `RWF ${fmt(val)}`;
+  }
+
+  // For backwards compat — used in Article 3
+  const processingFeeText = oneTimeProcessingFee
+    ? feeText(oneTimeProcessingFee, loan.amount)
+    : procFeeRateNum > 0
+      ? `${procFeeMonthly.toFixed(2)}%/month per installment`
+      : "N/A";
 
   const installmentAmt = loan.totalRepayable > 0 && loan.totalInstallments > 0
     ? Math.round(loan.totalRepayable / loan.totalInstallments)
@@ -354,7 +375,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       <div class="tg-item">
         <div class="tg-label">Total Repayable</div>
         <div class="tg-val">RWF ${fmt(loan.totalRepayable)}</div>
-        <div class="tg-sub">Principal + Interest</div>
+        <div class="tg-sub">Principal + Interest${mgmtFeeRate > 0 ? " + Mgmt Fee" : ""}${procFeeRateNum > 0 ? " + Proc Fee" : ""}</div>
       </div>
       <div class="tg-item">
         <div class="tg-label">${frequencyLabel(loan.repaymentFrequencyDays)} Installment</div>
@@ -364,8 +385,38 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       <div class="tg-item">
         <div class="tg-label">Interest Rate</div>
         <div class="tg-val">${annualRate.toFixed(2)}% p.a.</div>
-        <div class="tg-sub">${monthlyRate.toFixed(2)}% per month</div>
+        <div class="tg-sub">${monthlyRate.toFixed(2)}% / month · ${loan.interestMethod === "flat" ? "Flat" : "Declining"}</div>
       </div>
+      ${mgmtFeeRate > 0 ? `
+      <div class="tg-item">
+        <div class="tg-label">Management Fee</div>
+        <div class="tg-val">${mgmtFeeRate.toFixed(2)}% p.a.</div>
+        <div class="tg-sub">${mgmtFeeMonthly.toFixed(2)}% / month · per installment</div>
+      </div>` : ""}
+      ${procFeeRateNum > 0 ? `
+      <div class="tg-item">
+        <div class="tg-label">Processing Fee</div>
+        <div class="tg-val">${procFeeRateNum.toFixed(2)}% p.a.</div>
+        <div class="tg-sub">${procFeeMonthly.toFixed(2)}% / month · per installment</div>
+      </div>` : ""}
+      ${oneTimeProcessingFee ? `
+      <div class="tg-item">
+        <div class="tg-label">Processing Fee (One-time)</div>
+        <div class="tg-val">${feeText(oneTimeProcessingFee, loan.amount)}</div>
+        <div class="tg-sub">Collected at disbursement</div>
+      </div>` : ""}
+      ${oneTimeMgmtFee ? `
+      <div class="tg-item">
+        <div class="tg-label">Mgmt Fee (One-time)</div>
+        <div class="tg-val">${feeText(oneTimeMgmtFee, loan.amount)}</div>
+        <div class="tg-sub">Collected at disbursement</div>
+      </div>` : ""}
+      ${applicationFee ? `
+      <div class="tg-item">
+        <div class="tg-label">Application Fee</div>
+        <div class="tg-val">${feeText(applicationFee, loan.amount)}</div>
+        <div class="tg-sub">Non-refundable</div>
+      </div>` : ""}
       <div class="tg-item">
         <div class="tg-label">First Payment</div>
         <div class="tg-val" style="font-size:9pt;">${fmtDate(loan.firstPaymentDate)}</div>
@@ -432,12 +483,40 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       The loan bears interest at <strong>${monthlyRate.toFixed(2)}% per month</strong>
       (<strong>${annualRate.toFixed(2)}% per annum</strong>),
       calculated on a <strong>${loan.interestMethod === "flat" ? "flat" : "declining"} balance</strong> basis.
-      A loan processing fee of <strong>${processingFeeText}</strong> is payable upon disbursement.
     </p>
+    ${mgmtFeeRate > 0 ? `
+    <p>
+      A <strong>management fee</strong> of <strong>${mgmtFeeMonthly.toFixed(2)}% per month</strong>
+      (<strong>${mgmtFeeRate.toFixed(2)}% per annum</strong>) is charged per installment and is included
+      in each scheduled repayment amount.
+    </p>` : ""}
+    ${procFeeRateNum > 0 ? `
+    <p>
+      A <strong>processing fee</strong> of <strong>${procFeeMonthly.toFixed(2)}% per month</strong>
+      (<strong>${procFeeRateNum.toFixed(2)}% per annum</strong>) is charged per installment and is included
+      in each scheduled repayment amount.
+    </p>` : ""}
+    ${oneTimeProcessingFee ? `
+    <p>
+      A one-time <strong>processing fee</strong> of <strong>${feeText(oneTimeProcessingFee, loan.amount)}</strong>
+      is payable upon disbursement.
+    </p>` : ""}
+    ${oneTimeMgmtFee ? `
+    <p>
+      A one-time <strong>management fee</strong> of <strong>${feeText(oneTimeMgmtFee, loan.amount)}</strong>
+      is payable upon disbursement.
+    </p>` : ""}
+    ${applicationFee ? `
+    <p>
+      A non-refundable <strong>application fee</strong> of <strong>${feeText(applicationFee, loan.amount)}</strong>
+      is payable at the time of application.
+    </p>` : ""}
+    ${!mgmtFeeRate && !procFeeRateNum && !oneTimeProcessingFee && !oneTimeMgmtFee ? `
+    <p>A loan processing fee of <strong>${processingFeeText}</strong> is payable upon disbursement.</p>` : ""}
     <p>Late payment consequences:</p>
     <ul>
       <li>Interest continues to accrue on the outstanding balance.</li>
-      <li>A late payment penalty per the Lender's prevailing policy shall apply.</li>
+      <li>A late payment penalty of <strong>${Number(loan.penaltyRatePerDay) > 0 ? Number(loan.penaltyRatePerDay).toFixed(3) + "% per day" : "per the Lender's prevailing policy"}</strong> shall apply on overdue amounts.</li>
       <li>Loan management and recovery costs shall be borne by the Borrower.</li>
     </ul>
   </div>

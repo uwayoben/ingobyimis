@@ -43,16 +43,18 @@ function addPeriods(dateStr: string, n: number, frequency: string): string {
   return d.toISOString().slice(0, 10);
 }
 
-function calcLoan(principal: number, periodRate: number, periodMgmtFeeRate: number, n: number, method: "flat" | "declining") {
+function calcLoan(principal: number, periodRate: number, periodMgmtFeeRate: number, periodProcFeeRate: number, n: number, method: "flat" | "declining") {
   if (principal <= 0 || n <= 0) return null;
-  const r = periodRate       / 100;
+  const r = periodRate        / 100;
   const m = periodMgmtFeeRate / 100;
-  const combinedRate = r + m;
-  let emi = 0, totalInterest = 0, totalMgmtFee = 0;
+  const p = periodProcFeeRate / 100;
+  const combinedRate = r + m + p;
+  let emi = 0, totalInterest = 0, totalMgmtFee = 0, totalProcFee = 0;
   if (method === "flat") {
     totalInterest = principal * r * n;
     totalMgmtFee  = principal * m * n;
-    emi = (principal + totalInterest + totalMgmtFee) / n;
+    totalProcFee  = principal * p * n;
+    emi = (principal + totalInterest + totalMgmtFee + totalProcFee) / n;
   } else {
     if (combinedRate === 0) {
       emi = principal / n;
@@ -62,11 +64,13 @@ function calcLoan(principal: number, periodRate: number, periodMgmtFeeRate: numb
     const totalFees = emi * n - principal;
     totalInterest   = combinedRate > 0 ? totalFees * (r / combinedRate) : 0;
     totalMgmtFee    = combinedRate > 0 ? totalFees * (m / combinedRate) : 0;
+    totalProcFee    = combinedRate > 0 ? totalFees * (p / combinedRate) : 0;
   }
   return {
     emi:           Math.round(emi),
     totalInterest: Math.round(totalInterest),
     totalMgmtFee:  Math.round(totalMgmtFee),
+    totalProcFee:  Math.round(totalProcFee),
     totalRepayable: Math.round(emi * n),
   };
 }
@@ -339,8 +343,10 @@ export default function NewLoanPage() {
     // Fees
     applicationFee:        0,
     applicationFeeType:    "fixed"       as "fixed" | "percentage",
+    processingFeeMode:     "one_time"    as "one_time" | "per_installment",
     processingFee:         0,
     processingFeeType:     "fixed"       as "fixed" | "percentage",
+    processingFeeRate:     "",           // % per month string (for per_installment mode)
     managementFeeMode:     "one_time"    as "one_time" | "per_installment",
     managementFee:         0,            // used when mode = one_time (fixed RWF or % of principal)
     managementFeeType:     "percentage"  as "fixed" | "percentage",
@@ -370,7 +376,10 @@ export default function NewLoanPage() {
   const periodMgmtFeeRatePct = form.managementFeeMode === "per_installment"
     ? (parseFloat(form.managementFeeRate) || 0) * (freqDays / 30)
     : 0;
-  const calc = calcLoan(form.principal, periodRatePct, periodMgmtFeeRatePct, form.installments, form.interestMethod);
+  const periodProcFeeRatePct = form.processingFeeMode === "per_installment"
+    ? (parseFloat(form.processingFeeRate) || 0) * (freqDays / 30)
+    : 0;
+  const calc = calcLoan(form.principal, periodRatePct, periodMgmtFeeRatePct, periodProcFeeRatePct, form.installments, form.interestMethod);
 
   const customerAddress = selected
     ? [selected.village, selected.cell, selected.sector, selected.district, selected.province].filter(Boolean).join(", ")
@@ -414,7 +423,8 @@ export default function NewLoanPage() {
 
     const fees = [];
     if (form.applicationFee > 0) fees.push({ name: "Application Fee", type: form.applicationFeeType, value: form.applicationFee, isRecurring: false });
-    if (form.processingFee  > 0) fees.push({ name: "Processing Fee",  type: form.processingFeeType,  value: form.processingFee,  isRecurring: false });
+    if (form.processingFeeMode === "one_time" && form.processingFee > 0)
+      fees.push({ name: "Processing Fee", type: form.processingFeeType, value: form.processingFee, isRecurring: false });
     if (form.managementFeeMode === "one_time" && form.managementFee > 0)
       fees.push({ name: "Management Fee", type: form.managementFeeType, value: form.managementFee, isRecurring: false });
 
@@ -434,6 +444,7 @@ export default function NewLoanPage() {
           gracePeriodDays:        0,
           penaltyRatePerDay:      parseFloat(form.penaltyRate) || 0,
           managementFeeRate:      form.managementFeeMode === "per_installment" ? (parseFloat(form.managementFeeRate) || 0) * 12 : 0,
+          processingFeeRate:      form.processingFeeMode === "per_installment" ? (parseFloat(form.processingFeeRate) || 0) * 12 : 0,
           collateralType:         form.collateralType  || undefined,
           collateralAmount:       form.collateralValue || undefined,
           eligibleCollateral:     form.collateralValue || undefined,
@@ -622,14 +633,56 @@ export default function NewLoanPage() {
                     onTypeChange={(t) => set("applicationFeeType", t)}
                     onValueChange={(v) => set("applicationFee", v)}
                   />
-                  <FeeInput
-                    label="Processing Fee"
-                    type={form.processingFeeType}
-                    value={form.processingFee}
-                    principal={form.principal}
-                    onTypeChange={(t) => set("processingFeeType", t)}
-                    onValueChange={(v) => set("processingFee", v)}
-                  />
+                </div>
+
+                {/* Processing fee — mode selector */}
+                <div className="space-y-2 p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-medium text-gray-700 dark:text-gray-300">Processing Fee</label>
+                    <div className="flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden text-[10px] font-bold">
+                      <button
+                        type="button"
+                        onClick={() => set("processingFeeMode", "one_time")}
+                        className={`px-3 py-1 transition-colors ${form.processingFeeMode === "one_time" ? "bg-green-600 text-white" : "text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700"}`}
+                      >
+                        One-time
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => set("processingFeeMode", "per_installment")}
+                        className={`px-3 py-1 transition-colors ${form.processingFeeMode === "per_installment" ? "bg-green-600 text-white" : "text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700"}`}
+                      >
+                        Per installment
+                      </button>
+                    </div>
+                  </div>
+
+                  {form.processingFeeMode === "one_time" ? (
+                    <div>
+                      <FeeInput
+                        label=""
+                        type={form.processingFeeType}
+                        value={form.processingFee}
+                        principal={form.principal}
+                        onTypeChange={(t) => set("processingFeeType", t)}
+                        onValueChange={(v) => set("processingFee", v)}
+                      />
+                      <p className="text-[11px] text-gray-400 mt-1">Collected once — does not affect installment amount</p>
+                    </div>
+                  ) : (
+                    <div>
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={form.processingFeeRate}
+                        onChange={(e) => set("processingFeeRate", e.target.value)}
+                        placeholder="e.g. 0.5"
+                        className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-green-500"
+                      />
+                      <p className="text-[11px] text-gray-400 mt-1">% per month — baked into installment amount like interest</p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Management fee — mode selector */}
@@ -894,6 +947,12 @@ export default function NewLoanPage() {
                             <span className="font-medium text-purple-600 dark:text-purple-400">{fmt(calc.totalMgmtFee)}</span>
                           </div>
                         )}
+                        {calc.totalProcFee > 0 && (
+                          <div className="flex justify-between text-xs">
+                            <span className="text-sky-500 dark:text-sky-400">Total Processing Fee</span>
+                            <span className="font-medium text-sky-600 dark:text-sky-400">{fmt(calc.totalProcFee)}</span>
+                          </div>
+                        )}
                         <div className="flex justify-between text-xs font-bold border-t border-gray-100 dark:border-gray-800 pt-1.5">
                           <span className="text-gray-700 dark:text-gray-300">Total Repayable</span>
                           <span className="text-gray-900 dark:text-gray-100">{fmt(calc.totalRepayable)}</span>
@@ -910,6 +969,11 @@ export default function NewLoanPage() {
                         {calc.totalMgmtFee > 0 && (
                           <p className="text-[10px] text-purple-600 dark:text-purple-400 mt-1">
                             incl. {fmt(Math.round(calc.totalMgmtFee / form.installments))} mgmt fee / installment
+                          </p>
+                        )}
+                        {calc.totalProcFee > 0 && (
+                          <p className="text-[10px] text-sky-600 dark:text-sky-400 mt-0.5">
+                            incl. {fmt(Math.round(calc.totalProcFee / form.installments))} proc fee / installment
                           </p>
                         )}
                       </div>

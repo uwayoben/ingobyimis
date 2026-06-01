@@ -148,6 +148,8 @@ function mockLoan(o: {
     penaltyPaid: 0,
     penaltyWaived: 0,
     penaltyRatePerDay: 0,
+    additionalInterest: 0,
+    additionalInterestPaid: 0,
     managementFeeRate: 0,
     totalInterestScheduled: 0,
     totalMgmtFeeScheduled: 0,

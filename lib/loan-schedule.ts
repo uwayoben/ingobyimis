@@ -5,6 +5,7 @@ export interface InstallmentRow {
   principalDue: number;
   interestDue: number;
   managementFeeDue: number;
+  processingFeeDue: number;
   totalDue: number;
 }
 
@@ -15,21 +16,25 @@ export function generateSchedule(
   totalInstallments: number,
   firstPaymentDate: Date,
   repaymentFrequencyDays: number,
-  annualMgmtFeeRate: number = 0, // e.g. 12 for 1%/month — charged like interest
+  annualMgmtFeeRate: number = 0,        // e.g. 12 for 1%/month — charged like interest
+  annualProcessingFeeRate: number = 0,  // e.g. 6 for 0.5%/month — charged like interest
 ): InstallmentRow[] {
-  const periodsPerYear     = 360 / repaymentFrequencyDays;
-  const periodRate         = annualInterestRate / 100 / periodsPerYear;
-  const mgmtFeePeriodRate  = annualMgmtFeeRate  / 100 / periodsPerYear;
-  const combinedRate       = periodRate + mgmtFeePeriodRate;
+  const periodsPerYear        = 360 / repaymentFrequencyDays;
+  const periodRate            = annualInterestRate      / 100 / periodsPerYear;
+  const mgmtFeePeriodRate     = annualMgmtFeeRate       / 100 / periodsPerYear;
+  const procFeePeriodRate     = annualProcessingFeeRate / 100 / periodsPerYear;
+  const combinedRate          = periodRate + mgmtFeePeriodRate + procFeePeriodRate;
 
   const rows: InstallmentRow[] = [];
 
   if (interestMethod === "flat") {
-    const totalInterest   = principal * periodRate        * totalInstallments;
-    const totalMgmtFee    = principal * mgmtFeePeriodRate * totalInstallments;
-    const principalDue    = Math.round(principal      / totalInstallments);
-    const interestDue     = Math.round(totalInterest  / totalInstallments);
-    const managementFeeDue = Math.round(totalMgmtFee  / totalInstallments);
+    const totalInterest    = principal * periodRate        * totalInstallments;
+    const totalMgmtFee     = principal * mgmtFeePeriodRate * totalInstallments;
+    const totalProcFee     = principal * procFeePeriodRate * totalInstallments;
+    const principalDue     = Math.round(principal      / totalInstallments);
+    const interestDue      = Math.round(totalInterest  / totalInstallments);
+    const managementFeeDue = Math.round(totalMgmtFee   / totalInstallments);
+    const processingFeeDue = Math.round(totalProcFee   / totalInstallments);
 
     for (let i = 0; i < totalInstallments; i++) {
       const due = new Date(firstPaymentDate);
@@ -40,7 +45,8 @@ export function generateSchedule(
         principalDue,
         interestDue,
         managementFeeDue,
-        totalDue: principalDue + interestDue + managementFeeDue,
+        processingFeeDue,
+        totalDue: principalDue + interestDue + managementFeeDue + processingFeeDue,
       });
     }
   } else {
@@ -53,7 +59,8 @@ export function generateSchedule(
     for (let i = 0; i < totalInstallments; i++) {
       const interestDue      = Math.round(balance * periodRate);
       const managementFeeDue = Math.round(balance * mgmtFeePeriodRate);
-      const principalDue     = Math.min(payment - interestDue - managementFeeDue, balance);
+      const processingFeeDue = Math.round(balance * procFeePeriodRate);
+      const principalDue     = Math.min(payment - interestDue - managementFeeDue - processingFeeDue, balance);
       balance -= principalDue;
 
       const due = new Date(firstPaymentDate);
@@ -64,7 +71,8 @@ export function generateSchedule(
         principalDue,
         interestDue,
         managementFeeDue,
-        totalDue: principalDue + interestDue + managementFeeDue,
+        processingFeeDue,
+        totalDue: principalDue + interestDue + managementFeeDue + processingFeeDue,
       });
     }
   }

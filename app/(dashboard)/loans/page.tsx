@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Search, FileText, Loader2, AlertTriangle, CheckCircle2, Clock, Banknote, ChevronDown, Upload, Trash2 } from "lucide-react";
+import { Plus, Search, FileText, Loader2, AlertTriangle, CheckCircle2, Clock, Banknote, ChevronDown, Upload, Trash2, Eye, UploadCloud } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -79,6 +79,7 @@ export default function LoansPage() {
   const [showDeleteAll,  setShowDeleteAll]  = useState(false);
   const [deletingAll,    setDeletingAll]    = useState(false);
   const [deleteAllError, setDeleteAllError] = useState("");
+  const [uploadingId,    setUploadingId]    = useState<string | null>(null);
 
   const fetchLoans = useCallback(async () => {
     setLoading(true);
@@ -86,7 +87,7 @@ export default function LoansPage() {
       const params = new URLSearchParams({ limit: "100" });
       if (search) params.set("search", search);
       if (tab !== "all") params.set("status", tab);
-      const res = await apiFetch(`/api/v1/loans?${params}`);
+      const res = await apiFetch(`/api/v1/loans?${params}`, { cache: "no-store" });
       if (!res.ok) return;
       const json = await res.json();
       setLoans(json.data ?? []);
@@ -297,6 +298,7 @@ export default function LoansPage() {
                     "Interest Remaining",
                     "Penalty",
                     "Due Date",
+                    "Contract",
                   ].map((h) => (
                     <th key={h} className="text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-4 py-3 first:pl-6 last:pr-6">
                       {h}
@@ -423,13 +425,89 @@ export default function LoansPage() {
                         </td>
 
                         {/* Due Date */}
-                        <td className="px-4 pr-6 py-3.5">
+                        <td className="px-4 py-3.5">
                           <div className={`text-xs font-medium flex items-center gap-1 ${isPastDue ? "text-red-600 dark:text-red-400" : "text-gray-600 dark:text-gray-400"}`}>
                             {isPastDue && <AlertTriangle className="w-3 h-3 shrink-0" />}
                             {formatDate(loan.agreedMaturityDate)}
                           </div>
                           {loan.nextPaymentDate && ["active", "overdue"].includes(loan.status) && (
                             <p className="text-[10px] text-gray-400 mt-0.5">Next: {formatDate(loan.nextPaymentDate)}</p>
+                          )}
+                        </td>
+
+                        {/* Contract */}
+                        <td className="px-4 pr-6 py-3.5">
+                          {loan.signedContractUrl ? (
+                            <div className="flex items-center gap-1.5">
+                              <a
+                                href={loan.signedContractUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+                              >
+                                <Eye className="w-3 h-3" /> View
+                              </a>
+                              <label className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors cursor-pointer">
+                                {uploadingId === loan.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <UploadCloud className="w-3 h-3" />}
+                                <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png"
+                                  onChange={async (e) => {
+                                    const file = e.target.files?.[0];
+                                    if (!file) return;
+                                    setUploadingId(loan.id);
+                                    try {
+                                      const fd = new FormData();
+                                      fd.append("file", file);
+                                      fd.append("folder", "contracts");
+                                      const upRes  = await apiFetch("/api/v1/uploads", { method: "POST", body: fd });
+                                      const upJson = await upRes.json();
+                                      if (!upRes.ok) return;
+                                      const saveRes = await apiFetch(`/api/v1/loans/${loan.id}/contract`, {
+                                        method: "PATCH",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ signedContractUrl: upJson.data.url }),
+                                      });
+                                      if (!saveRes.ok) return;
+                                      setLoans((prev) => prev.map((l) => l.id === loan.id ? { ...l, signedContractUrl: upJson.data.url } : l));
+                                    } finally {
+                                      setUploadingId(null);
+                                      e.target.value = "";
+                                    }
+                                  }}
+                                />
+                              </label>
+                            </div>
+                          ) : (
+                            <label className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-gray-500 dark:text-gray-400 border border-dashed border-gray-300 dark:border-gray-600 hover:border-green-400 hover:text-green-600 dark:hover:text-green-400 transition-colors cursor-pointer">
+                              {uploadingId === loan.id
+                                ? <Loader2 className="w-3 h-3 animate-spin" />
+                                : <UploadCloud className="w-3 h-3" />}
+                              {uploadingId === loan.id ? "Uploading…" : "Upload"}
+                              <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png"
+                                onChange={async (e) => {
+                                  const file = e.target.files?.[0];
+                                  if (!file) return;
+                                  setUploadingId(loan.id);
+                                  try {
+                                    const fd = new FormData();
+                                    fd.append("file", file);
+                                    fd.append("folder", "contracts");
+                                    const upRes  = await apiFetch("/api/v1/uploads", { method: "POST", body: fd });
+                                    const upJson = await upRes.json();
+                                    if (!upRes.ok) return;
+                                    const saveRes = await apiFetch(`/api/v1/loans/${loan.id}/contract`, {
+                                      method: "PATCH",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({ signedContractUrl: upJson.data.url }),
+                                    });
+                                    if (!saveRes.ok) return;
+                                    setLoans((prev) => prev.map((l) => l.id === loan.id ? { ...l, signedContractUrl: upJson.data.url } : l));
+                                  } finally {
+                                    setUploadingId(null);
+                                    e.target.value = "";
+                                  }
+                                }}
+                              />
+                            </label>
                           )}
                         </td>
 

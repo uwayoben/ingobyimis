@@ -5,7 +5,10 @@ export function ok<T>(data: T, status = 200): Response {
 }
 
 export function paginated<T>(data: T[], total: number, page: number, limit: number): Response {
-  return Response.json({ data, meta: { total, page, limit, pages: Math.ceil(total / limit) } });
+  return Response.json(
+    { data, meta: { total, page, limit, pages: Math.ceil(total / limit) } },
+    { headers: { "Cache-Control": "no-store" } }
+  );
 }
 
 export function created<T>(data: T): Response {
