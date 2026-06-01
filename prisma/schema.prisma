@@ -141,9 +141,10 @@ model User {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  officerLoans  Loan[]    @relation("LoanOfficer")
-  approvedLoans Loan[]    @relation("ApprovedBy")
+  officerLoans  Loan[]        @relation("LoanOfficer")
+  approvedLoans Loan[]        @relation("ApprovedBy")
   payments      Payment[]
+  loanComments  LoanComment[]
 }
 
 model Customer {
@@ -231,10 +232,19 @@ model Loan {
   penaltyWaivedAt           DateTime?
   penaltyRatePerDay         Decimal          @db.Decimal(5,3) @default(0)   // % of overdue installment per day
   lastPenaltyCalculatedAt   DateTime?                                        // last time auto-penalty was applied
+  additionalInterest          Int              @default(0)                     // manually-added extra interest outstanding
+  additionalInterestPaid      Int              @default(0)                     // cumulative manually-added interest collected
+  additionalMgmtFee           Int              @default(0)                     // manually-added extra management fee outstanding
+  additionalMgmtFeePaid       Int              @default(0)                     // cumulative manually-added management fee collected
+  additionalProcessingFee     Int              @default(0)                     // manually-added extra processing fee outstanding
+  additionalProcessingFeePaid Int              @default(0)                     // cumulative manually-added processing fee collected
   managementFeeRate         Decimal          @db.Decimal(5,3) @default(0)   // % per period, charged like interest
+  processingFeeRate         Decimal          @db.Decimal(5,3) @default(0)   // % per period, charged like interest
   totalInterestScheduled    Int              @default(0)                     // sum of interestDue from generated schedule
   totalMgmtFeeScheduled     Int              @default(0)                     // sum of managementFeeDue from generated schedule
+  totalProcessingFeeScheduled Int            @default(0)                     // sum of processingFeeDue from generated schedule
   amountRepaidMgmtFee       Int              @default(0)                     // management fee collected so far
+  amountRepaidProcessingFee Int              @default(0)                     // processing fee collected so far
 
   // Collateral
   collateralType          String?
@@ -251,6 +261,9 @@ model Loan {
   // Top-up tracking
   topUpAmount             Int              @default(0)
 
+  // Signed contract
+  signedContractUrl       String?          @db.Text
+
   // Status flags
   status                  LoanStatus       @default(pending)
   isRestructured          Boolean          @default(false)
@@ -266,6 +279,7 @@ model Loan {
   payments                Payment[]
   installments            Installment[]
   documents               LoanDocument[]
+  comments                LoanComment[]
 }
 
 model Installment {
@@ -277,6 +291,7 @@ model Installment {
   principalDue      Int
   interestDue       Int
   managementFeeDue  Int               @default(0)
+  processingFeeDue  Int               @default(0)
   totalDue          Int
   amountPaid     Int               @default(0)
   paidDate       DateTime?
@@ -293,6 +308,18 @@ model LoanFee {
   type        FeeType
   value       Decimal  @db.Decimal(10, 2)
   isRecurring Boolean  @default(false)
+}
+
+model LoanComment {
+  id          String   @id @default(cuid())
+  loanId      String
+  loan        Loan     @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  content     String   @db.Text
+  createdById String
+  createdBy   User     @relation(fields: [createdById], references: [id])
+  companyId   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model LoanDocument {
@@ -312,9 +339,13 @@ model Payment {
   loan         Loan          @relation(fields: [loanId], references: [id], onDelete: Cascade)
   customerId   String
   customer     Customer      @relation(fields: [customerId], references: [id])
-  amount         Int
-  penalty        Int           @default(0)
-  managementFee  Int           @default(0)
+  amount             Int
+  penalty            Int           @default(0)
+  additionalInterest      Int           @default(0)
+  additionalMgmtFee       Int           @default(0)
+  additionalProcessingFee Int           @default(0)
+  managementFee           Int           @default(0)
+  processingFee           Int           @default(0)
   interest       Int
   principal      Int
   date         DateTime

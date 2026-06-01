@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import {
   ArrowLeft, CheckCircle2, XCircle, Printer, ArrowDownToLine, Loader2,
   AlertTriangle, Banknote, TrendingDown, CreditCard, ArrowDownUp, FileText, ExternalLink,
-  MinusCircle, TrendingUp, Upload, X, Receipt, Trash2,
+  MinusCircle, TrendingUp, Upload, X, Receipt, Trash2, MessageSquare, Send, PlusCircle,
 } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Input, Select, Textarea } from "@/components/ui/Input";
 import { cn } from "@/lib/utils";
-import type { Loan, Installment, Payment } from "@/types";
+import type { Loan, Installment, Payment, LoanComment } from "@/types";
 import { apiFetch } from "@/lib/api-fetch";
 import { useRole } from "@/components/RoleContext";
 
@@ -47,6 +47,10 @@ function openInstallmentInvoice(
 
   const mgmtFeeRow = row.managementFeeDue > 0
     ? `<tr style="background:#fff"><td style="padding:10px 14px;color:#6b7280">Management Fee</td><td style="padding:10px 14px;text-align:right;font-weight:500">RWF ${row.managementFeeDue.toLocaleString()}</td></tr>`
+    : "";
+
+  const procFeeRow = (row.processingFeeDue ?? 0) > 0
+    ? `<tr style="background:#fff"><td style="padding:10px 14px;color:#6b7280">Processing Fee</td><td style="padding:10px 14px;text-align:right;font-weight:500">RWF ${(row.processingFeeDue ?? 0).toLocaleString()}</td></tr>`
     : "";
 
   const paidRow = row.amountPaid > 0
@@ -131,7 +135,7 @@ function openInstallmentInvoice(
         <h3>Loan Details</h3>
         <p><strong>Loan ID:</strong> ${loan.id.toUpperCase()}</p>
         <p><strong>Loan Amount:</strong> RWF ${loan.amount.toLocaleString()}</p>
-        <p><strong>Interest Rate:</strong> ${loan.annualInterestRate}% p.a.</p>
+        <p><strong>Interest Rate:</strong> ${(loan.annualInterestRate / 12).toFixed(2)}%/month</p>
         <p><strong>Total Installments:</strong> ${loan.totalInstallments}</p>
       </div>
     </div>
@@ -146,6 +150,7 @@ function openInstallmentInvoice(
       <tr style="background:#fff"><td class="lbl">Principal</td><td class="val">RWF ${row.principalDue.toLocaleString()}</td></tr>
       <tr><td class="lbl">Interest</td><td class="val">RWF ${row.interestDue.toLocaleString()}</td></tr>
       ${mgmtFeeRow}
+      ${procFeeRow}
       <tr class="total-row"><td>TOTAL DUE</td><td class="val">RWF ${row.totalDue.toLocaleString()}</td></tr>
       ${paidRow}
       <tr class="bal-row"><td>BALANCE DUE</td><td class="val">RWF ${balance.toLocaleString()}</td></tr>
@@ -191,9 +196,10 @@ function loanPeriodRate(loan: Loan): number {
 
 function interestRemaining(loan: Loan): number {
   const totalMgmtFeeScheduled = loan.totalMgmtFeeScheduled ?? 0;
+  const totalProcFeeScheduled = loan.totalProcessingFeeScheduled ?? 0;
   const totalInterest = (loan.totalInterestScheduled ?? 0) > 0
     ? loan.totalInterestScheduled!
-    : loan.totalRepayable - loan.amount - totalMgmtFeeScheduled;
+    : loan.totalRepayable - loan.amount - totalMgmtFeeScheduled - totalProcFeeScheduled;
   return Math.max(0, totalInterest - loan.amountRepaidInterest);
 }
 
@@ -201,8 +207,12 @@ function mgmtFeeRemaining(loan: Loan): number {
   return Math.max(0, (loan.totalMgmtFeeScheduled ?? 0) - (loan.amountRepaidMgmtFee ?? 0));
 }
 
+function processingFeeRemaining(loan: Loan): number {
+  return Math.max(0, (loan.totalProcessingFeeScheduled ?? 0) - (loan.amountRepaidProcessingFee ?? 0));
+}
+
 function trueOutstanding(loan: Loan): number {
-  return loan.balanceOutstanding + interestRemaining(loan) + mgmtFeeRemaining(loan) + loan.penaltyAmount;
+  return loan.balanceOutstanding + interestRemaining(loan) + mgmtFeeRemaining(loan) + processingFeeRemaining(loan) + loan.penaltyAmount + (loan.additionalInterest ?? 0) + (loan.additionalMgmtFee ?? 0) + (loan.additionalProcessingFee ?? 0);
 }
 
 const INSTALLMENT_STATUS_COLOR: Record<string, string> = {
@@ -263,32 +273,44 @@ function RecordPaymentForm({
   const [loading, setLoading]         = useState(false);
   const [error, setError]             = useState("");
 
-  const penalty      = loan.penaltyAmount;
-  const totalOuts    = trueOutstanding(loan);
-  const amt          = Math.min(Number(amount) || 0, totalOuts);
+  const penalty          = loan.penaltyAmount;
+  const addlInterest     = loan.additionalInterest    ?? 0;
+  const addlMgmtFee      = loan.additionalMgmtFee     ?? 0;
+  const addlProcFee      = loan.additionalProcessingFee ?? 0;
+  const totalOuts        = trueOutstanding(loan);
+  const amt              = Math.min(Number(amount) || 0, totalOuts);
 
-  const periodsPerYear   = 360 / loan.repaymentFrequencyDays;
-  const periodRate       = Number(loan.annualInterestRate)     / 100 / periodsPerYear;
-  const mgmtFeePeriodRate = Number(loan.managementFeeRate ?? 0) / 100 / periodsPerYear;
+  const periodsPerYear    = 360 / loan.repaymentFrequencyDays;
+  const periodRate        = Number(loan.annualInterestRate)         / 100 / periodsPerYear;
+  const mgmtFeePeriodRate = Number(loan.managementFeeRate ?? 0)     / 100 / periodsPerYear;
+  const procFeePeriodRate = Number(loan.processingFeeRate ?? 0)     / 100 / periodsPerYear;
 
-  const totalMgmtFeeScheduled = loan.totalMgmtFeeScheduled ?? 0;
-  const remainingMgmtFee      = mgmtFeeRemaining(loan);
-  const periodMgmtFee         = loan.balanceOutstanding > 0
+  const remainingProcFee  = processingFeeRemaining(loan);
+  const periodProcFee     = loan.balanceOutstanding > 0
+    ? Math.round(loan.balanceOutstanding * procFeePeriodRate) : remainingProcFee;
+  const currentProcFee    = Math.min(periodProcFee, remainingProcFee);
+
+  const remainingMgmtFee  = mgmtFeeRemaining(loan);
+  const periodMgmtFee     = loan.balanceOutstanding > 0
     ? Math.round(loan.balanceOutstanding * mgmtFeePeriodRate) : remainingMgmtFee;
-  const currentMgmtFee = Math.min(periodMgmtFee, remainingMgmtFee);
+  const currentMgmtFee    = Math.min(periodMgmtFee, remainingMgmtFee);
 
   const remainingInt   = interestRemaining(loan);
   const periodInterest = loan.balanceOutstanding > 0
     ? Math.round(loan.balanceOutstanding * periodRate) : remainingInt;
   const currentInt     = Math.min(periodInterest, remainingInt);
 
-  const isPayoffPreview = amt >= (penalty + remainingMgmtFee + remainingInt + loan.balanceOutstanding);
+  const isPayoffPreview = amt >= (penalty + addlInterest + addlMgmtFee + addlProcFee + remainingProcFee + remainingMgmtFee + remainingInt + loan.balanceOutstanding);
 
-  let remaining0      = amt;
-  const penaltyPaid   = Math.min(remaining0, penalty);        remaining0 -= penaltyPaid;
-  const mgmtFeePreview = Math.min(remaining0, isPayoffPreview ? remainingMgmtFee : currentMgmtFee); remaining0 -= mgmtFeePreview;
-  const interest      = Math.min(remaining0, isPayoffPreview ? remainingInt : currentInt);          remaining0 -= interest;
-  const principal     = remaining0;
+  let remaining0              = amt;
+  const penaltyPaid           = Math.min(remaining0, penalty);                                                         remaining0 -= penaltyPaid;
+  const addlInterestPreview   = Math.min(remaining0, addlInterest);                                                    remaining0 -= addlInterestPreview;
+  const addlMgmtFeePreview    = Math.min(remaining0, addlMgmtFee);                                                     remaining0 -= addlMgmtFeePreview;
+  const addlProcFeePreview    = Math.min(remaining0, addlProcFee);                                                      remaining0 -= addlProcFeePreview;
+  const mgmtFeePreview        = Math.min(remaining0, isPayoffPreview ? remainingMgmtFee : currentMgmtFee);             remaining0 -= mgmtFeePreview;
+  const procFeePreview        = Math.min(remaining0, isPayoffPreview ? remainingProcFee : currentProcFee);              remaining0 -= procFeePreview;
+  const interest              = Math.min(remaining0, isPayoffPreview ? remainingInt : currentInt);                     remaining0 -= interest;
+  const principal             = remaining0;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -380,6 +402,24 @@ function RecordPaymentForm({
           <span className={penalty > 0 ? "text-red-500 dark:text-red-400" : "text-gray-500"}>Unpaid Penalty</span>
           <span className={cn("font-semibold", penalty > 0 ? "text-red-600 dark:text-red-400" : "text-gray-400")}>{formatCurrency(penalty)}</span>
         </div>
+        {addlInterest > 0 && (
+          <div className="flex justify-between">
+            <span className="text-orange-500 dark:text-orange-400">Additional Interest</span>
+            <span className="font-semibold text-orange-600 dark:text-orange-400">{formatCurrency(addlInterest)}</span>
+          </div>
+        )}
+        {addlMgmtFee > 0 && (
+          <div className="flex justify-between">
+            <span className="text-purple-500 dark:text-purple-400">Additional Mgmt Fee</span>
+            <span className="font-semibold text-purple-600 dark:text-purple-400">{formatCurrency(addlMgmtFee)}</span>
+          </div>
+        )}
+        {addlProcFee > 0 && (
+          <div className="flex justify-between">
+            <span className="text-sky-500 dark:text-sky-400">Additional Processing Fee</span>
+            <span className="font-semibold text-sky-600 dark:text-sky-400">{formatCurrency(addlProcFee)}</span>
+          </div>
+        )}
         <div className="border-t border-gray-200 dark:border-gray-700 pt-2 mt-2 flex justify-between">
           <span className="font-bold text-gray-700 dark:text-gray-300">TOTAL OUTSTANDING</span>
           <span className="font-bold text-red-600 dark:text-red-400">{formatCurrency(totalOuts)}</span>
@@ -407,10 +447,34 @@ function RecordPaymentForm({
               <span className="font-bold text-red-600 dark:text-red-400">{formatCurrency(penaltyPaid)}</span>
             </div>
           )}
+          {addlInterestPreview > 0 && (
+            <div className="flex justify-between">
+              <span className="text-gray-500">→ Additional Interest</span>
+              <span className="font-bold text-orange-600 dark:text-orange-400">{formatCurrency(addlInterestPreview)}</span>
+            </div>
+          )}
+          {addlMgmtFeePreview > 0 && (
+            <div className="flex justify-between">
+              <span className="text-gray-500">→ Additional Mgmt Fee</span>
+              <span className="font-semibold text-purple-600 dark:text-purple-400">{formatCurrency(addlMgmtFeePreview)}</span>
+            </div>
+          )}
+          {addlProcFeePreview > 0 && (
+            <div className="flex justify-between">
+              <span className="text-gray-500">→ Additional Processing Fee</span>
+              <span className="font-semibold text-sky-600 dark:text-sky-400">{formatCurrency(addlProcFeePreview)}</span>
+            </div>
+          )}
           {mgmtFeePreview > 0 && (
             <div className="flex justify-between">
               <span className="text-gray-500">→ Management Fee</span>
               <span className="font-semibold text-purple-600 dark:text-purple-400">{formatCurrency(mgmtFeePreview)}</span>
+            </div>
+          )}
+          {procFeePreview > 0 && (
+            <div className="flex justify-between">
+              <span className="text-gray-500">→ Processing Fee</span>
+              <span className="font-semibold text-sky-600 dark:text-sky-400">{formatCurrency(procFeePreview)}</span>
             </div>
           )}
           <div className="flex justify-between">
@@ -607,6 +671,306 @@ function WaiverForm({
         <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
         <Button type="submit" loading={loading} variant="danger" icon={<MinusCircle className="w-4 h-4" />}>
           {isFullWaive ? "Waive Full Penalty" : "Waive Partial Penalty"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+// ── Add Additional Interest Form ──────────────────────────────────────────────
+function AddInterestForm({
+  loan,
+  onClose,
+  onSaved,
+}: {
+  loan: Loan;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [amount,  setAmount]  = useState("");
+  const [reason,  setReason]  = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState("");
+
+  const addlAmt       = Math.max(0, Number(amount) || 0);
+  const currentAddl   = loan.additionalInterest ?? 0;
+  const newTotal      = currentAddl + addlAmt;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    if (!addlAmt || addlAmt <= 0) { setError("Enter a valid amount greater than zero."); return; }
+    if (!reason.trim()) { setError("A reason is required."); return; }
+    setLoading(true);
+    try {
+      const res  = await apiFetch(`/api/v1/loans/${loan.id}/additional-interest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: addlAmt, reason: reason.trim() }),
+      });
+      const json = await res.json();
+      if (!res.ok) { setError(json.error || "Failed to add additional interest."); return; }
+      onSaved();
+    } catch {
+      setError("Network error.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="p-6 space-y-4">
+      {error && (
+        <p className="text-xs text-red-600 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">{error}</p>
+      )}
+
+      {currentAddl > 0 && (
+        <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-xl p-3 text-xs">
+          <p className="font-semibold text-orange-700 dark:text-orange-300 mb-1">Existing Additional Interest</p>
+          <p className="text-orange-600 dark:text-orange-400">{formatCurrency(currentAddl)} already outstanding — the new amount will be added on top.</p>
+        </div>
+      )}
+
+      <div className="bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-xl p-4 text-xs space-y-2">
+        <p className="font-semibold text-gray-700 dark:text-gray-300">How it works</p>
+        <p className="text-gray-500 dark:text-gray-400">The amount you enter will be added to this loan&apos;s outstanding balance. When the customer next pays, it will be collected automatically (after any penalty, before regular interest).</p>
+      </div>
+
+      <Input
+        label="Additional Interest Amount (RWF)"
+        type="number"
+        min="1"
+        placeholder="e.g. 50000"
+        value={amount}
+        onChange={(e) => setAmount(e.target.value)}
+        required
+      />
+
+      {addlAmt > 0 && (
+        <div className="bg-orange-50 dark:bg-orange-900/10 border border-orange-200 dark:border-orange-800/50 rounded-xl p-3 text-xs space-y-1.5">
+          <div className="flex justify-between">
+            <span className="text-gray-500">Amount to Add</span>
+            <span className="font-bold text-orange-600 dark:text-orange-400">{formatCurrency(addlAmt)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">Total Additional Interest After</span>
+            <span className="font-semibold text-orange-700 dark:text-orange-300">{formatCurrency(newTotal)}</span>
+          </div>
+        </div>
+      )}
+
+      <Textarea
+        label="Reason (required)"
+        placeholder="e.g. Late payment — May 2026 installment overdue by 15 days"
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        required
+      />
+
+      <div className="flex justify-end gap-3">
+        <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+        <Button type="submit" loading={loading} icon={<PlusCircle className="w-4 h-4" />}>
+          Add Interest
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+// ── Add Additional Management Fee Form ───────────────────────────────────────
+function AddMgmtFeeForm({
+  loan,
+  onClose,
+  onSaved,
+}: {
+  loan: Loan;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [amount,  setAmount]  = useState("");
+  const [reason,  setReason]  = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState("");
+
+  const addlAmt     = Math.max(0, Number(amount) || 0);
+  const currentAddl = loan.additionalMgmtFee ?? 0;
+  const newTotal    = currentAddl + addlAmt;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    if (!addlAmt || addlAmt <= 0) { setError("Enter a valid amount greater than zero."); return; }
+    if (!reason.trim()) { setError("A reason is required."); return; }
+    setLoading(true);
+    try {
+      const res  = await apiFetch(`/api/v1/loans/${loan.id}/additional-management-fee`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: addlAmt, reason: reason.trim() }),
+      });
+      const json = await res.json();
+      if (!res.ok) { setError(json.error || "Failed to add additional management fee."); return; }
+      onSaved();
+    } catch {
+      setError("Network error.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="p-6 space-y-4">
+      {error && (
+        <p className="text-xs text-red-600 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">{error}</p>
+      )}
+
+      {currentAddl > 0 && (
+        <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-xl p-3 text-xs">
+          <p className="font-semibold text-purple-700 dark:text-purple-300 mb-1">Existing Additional Management Fee</p>
+          <p className="text-purple-600 dark:text-purple-400">{formatCurrency(currentAddl)} already outstanding — the new amount will be added on top.</p>
+        </div>
+      )}
+
+      <div className="bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-xl p-4 text-xs space-y-2">
+        <p className="font-semibold text-gray-700 dark:text-gray-300">How it works</p>
+        <p className="text-gray-500 dark:text-gray-400">The amount you enter will be added to this loan&apos;s outstanding balance as a management fee charge. It will be collected automatically when the customer next pays (after penalty and additional interest).</p>
+      </div>
+
+      <Input
+        label="Additional Management Fee Amount (RWF)"
+        type="number"
+        min="1"
+        placeholder="e.g. 20000"
+        value={amount}
+        onChange={(e) => setAmount(e.target.value)}
+        required
+      />
+
+      {addlAmt > 0 && (
+        <div className="bg-purple-50 dark:bg-purple-900/10 border border-purple-200 dark:border-purple-800/50 rounded-xl p-3 text-xs space-y-1.5">
+          <div className="flex justify-between">
+            <span className="text-gray-500">Amount to Add</span>
+            <span className="font-bold text-purple-600 dark:text-purple-400">{formatCurrency(addlAmt)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">Total Additional Mgmt Fee After</span>
+            <span className="font-semibold text-purple-700 dark:text-purple-300">{formatCurrency(newTotal)}</span>
+          </div>
+        </div>
+      )}
+
+      <Textarea
+        label="Reason (required)"
+        placeholder="e.g. Additional management fee for loan restructuring"
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        required
+      />
+
+      <div className="flex justify-end gap-3">
+        <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+        <Button type="submit" loading={loading} icon={<PlusCircle className="w-4 h-4" />}>
+          Add Management Fee
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+// ── Add Additional Processing Fee Form ───────────────────────────────────────
+function AddProcessingFeeForm({
+  loan,
+  onClose,
+  onSaved,
+}: {
+  loan: Loan;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [amount,  setAmount]  = useState("");
+  const [reason,  setReason]  = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState("");
+
+  const addlAmt     = Math.max(0, Number(amount) || 0);
+  const currentAddl = loan.additionalProcessingFee ?? 0;
+  const newTotal    = currentAddl + addlAmt;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    if (!addlAmt || addlAmt <= 0) { setError("Enter a valid amount greater than zero."); return; }
+    if (!reason.trim()) { setError("A reason is required."); return; }
+    setLoading(true);
+    try {
+      const res  = await apiFetch(`/api/v1/loans/${loan.id}/additional-processing-fee`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: addlAmt, reason: reason.trim() }),
+      });
+      const json = await res.json();
+      if (!res.ok) { setError(json.error || "Failed to add additional processing fee."); return; }
+      onSaved();
+    } catch {
+      setError("Network error.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="p-6 space-y-4">
+      {error && (
+        <p className="text-xs text-red-600 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">{error}</p>
+      )}
+
+      {currentAddl > 0 && (
+        <div className="bg-sky-50 dark:bg-sky-900/20 border border-sky-200 dark:border-sky-800 rounded-xl p-3 text-xs">
+          <p className="font-semibold text-sky-700 dark:text-sky-300 mb-1">Existing Additional Processing Fee</p>
+          <p className="text-sky-600 dark:text-sky-400">{formatCurrency(currentAddl)} already outstanding — the new amount will be added on top.</p>
+        </div>
+      )}
+
+      <div className="bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-xl p-4 text-xs space-y-2">
+        <p className="font-semibold text-gray-700 dark:text-gray-300">How it works</p>
+        <p className="text-gray-500 dark:text-gray-400">The amount you enter will be added to this loan&apos;s outstanding balance as a processing fee charge. It will be collected automatically when the customer next pays (after penalty and additional interest).</p>
+      </div>
+
+      <Input
+        label="Additional Processing Fee Amount (RWF)"
+        type="number"
+        min="1"
+        placeholder="e.g. 10000"
+        value={amount}
+        onChange={(e) => setAmount(e.target.value)}
+        required
+      />
+
+      {addlAmt > 0 && (
+        <div className="bg-sky-50 dark:bg-sky-900/10 border border-sky-200 dark:border-sky-800/50 rounded-xl p-3 text-xs space-y-1.5">
+          <div className="flex justify-between">
+            <span className="text-gray-500">Amount to Add</span>
+            <span className="font-bold text-sky-600 dark:text-sky-400">{formatCurrency(addlAmt)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">Total Additional Processing Fee After</span>
+            <span className="font-semibold text-sky-700 dark:text-sky-300">{formatCurrency(newTotal)}</span>
+          </div>
+        </div>
+      )}
+
+      <Textarea
+        label="Reason (required)"
+        placeholder="e.g. Additional processing fee for loan amendment"
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        required
+      />
+
+      <div className="flex justify-end gap-3">
+        <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+        <Button type="submit" loading={loading} icon={<PlusCircle className="w-4 h-4" />}>
+          Add Processing Fee
         </Button>
       </div>
     </form>
@@ -913,23 +1277,30 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
   const router = useRouter();
   const { role } = useRole();
 
-  const canApprove      = ["managing_director", "super_admin"].includes(role);
-  const canDisburse     = ["managing_director", "loan_officer", "super_admin"].includes(role);
+  const canApprove       = ["managing_director", "super_admin"].includes(role);
+  const canDisburse      = ["managing_director", "loan_officer", "super_admin"].includes(role);
   const canRecordPayment = ["managing_director", "loan_officer", "super_admin"].includes(role);
-  const canDelete       = ["managing_director", "loan_officer", "super_admin"].includes(role);
+  const canDelete        = ["managing_director", "loan_officer", "super_admin"].includes(role);
 
   const [loan, setLoan]                 = useState<(Loan & { customer?: any; loanOfficer?: any; approvedBy?: any }) | null>(null);
   const [installments, setInstallments] = useState<Installment[]>([]);
   const [payments, setPayments]         = useState<(Payment & { recordedByName?: string })[]>([]);
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState("");
-  const [activeTab, setActiveTab]       = useState<"overview" | "schedule" | "payments" | "documents" | "contract">("overview");
+  const [activeTab, setActiveTab]       = useState<"overview" | "schedule" | "payments" | "documents" | "contract" | "comments">("overview");
+  const [comments, setComments]         = useState<LoanComment[]>([]);
+  const [commentText, setCommentText]   = useState("");
+  const [commentLoading, setCommentLoading] = useState(false);
+  const [commentError, setCommentError]     = useState("");
   const [actionModal, setActionModal]   = useState<"approve" | "reject" | "disburse" | null>(null);
   const [actioning, setActioning]       = useState(false);
   const [actionError, setActionError]   = useState("");
-  const [showPayModal,      setShowPayModal]      = useState(false);
-  const [showWaiveModal,    setShowWaiveModal]    = useState(false);
-  const [showTopUpModal,    setShowTopUpModal]    = useState(false);
+  const [showPayModal,            setShowPayModal]            = useState(false);
+  const [showWaiveModal,          setShowWaiveModal]          = useState(false);
+  const [showAddInterestModal,    setShowAddInterestModal]    = useState(false);
+  const [showAddMgmtFeeModal,     setShowAddMgmtFeeModal]     = useState(false);
+  const [showAddProcFeeModal,     setShowAddProcFeeModal]     = useState(false);
+  const [showTopUpModal,          setShowTopUpModal]          = useState(false);
   const [showContractModal, setShowContractModal] = useState(false);
   const [disburseDate,      setDisburseDate]      = useState(() => new Date().toISOString().slice(0, 10));
   const [showDeleteModal,   setShowDeleteModal]   = useState(false);
@@ -940,17 +1311,19 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
     setLoading(true);
     setError("");
     try {
-      const [loanRes, instRes, payRes] = await Promise.all([
+      const [loanRes, instRes, payRes, commentsRes] = await Promise.all([
         apiFetch(`/api/v1/loans/${id}`),
         apiFetch(`/api/v1/loans/${id}/installments`),
         apiFetch(`/api/v1/payments?loanId=${id}&limit=100`),
+        apiFetch(`/api/v1/loans/${id}/comments`),
       ]);
       if (loanRes.status === 404) { setError("Loan not found."); return; }
       if (!loanRes.ok) { setError("Failed to load loan."); return; }
       const loanJson = await loanRes.json();
       setLoan(loanJson.data);
-      if (instRes.ok) { const j = await instRes.json(); setInstallments(j.data ?? []); }
-      if (payRes.ok)  { const j = await payRes.json();  setPayments(j.data ?? []); }
+      if (instRes.ok)     { const j = await instRes.json();     setInstallments(j.data ?? []); }
+      if (payRes.ok)      { const j = await payRes.json();      setPayments(j.data ?? []); }
+      if (commentsRes.ok) { const j = await commentsRes.json(); setComments(j.data ?? []); }
     } catch {
       setError("Network error.");
     } finally {
@@ -1023,12 +1396,16 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
   const totalOuts      = trueOutstanding(loan);
   const intRemaining   = interestRemaining(loan);
   const mgmtFeeRepaid  = loan.amountRepaidMgmtFee ?? 0;
-  const totalPaid      = loan.amountRepaidPrincipal + loan.amountRepaidInterest + mgmtFeeRepaid + (loan.penaltyPaid ?? 0);
+  const procFeeRepaid  = loan.amountRepaidProcessingFee ?? 0;
+  const totalPaid      = loan.amountRepaidPrincipal + loan.amountRepaidInterest + mgmtFeeRepaid + procFeeRepaid + (loan.penaltyPaid ?? 0);
   const companyName   = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}").companyName ?? "NDF" : "NDF";
-  const canPayment    = ["active", "overdue", "disbursed"].includes(loan.status) ||
+  const canPayment      = ["active", "overdue", "disbursed"].includes(loan.status) ||
     (loan.status === "completed" && trueOutstanding(loan) > 0);
-  const canWaive      = canApprove && ["active", "overdue", "completed"].includes(loan.status) && loan.penaltyAmount > 0;
-  const canTopUp      = canDisburse && ["active", "overdue"].includes(loan.status) && loan.balanceOutstanding > 0;
+  const canWaive        = canApprove && ["active", "overdue", "completed"].includes(loan.status) && loan.penaltyAmount > 0;
+  const canAddInterest  = canRecordPayment && ["active", "overdue", "disbursed"].includes(loan.status);
+  const canAddMgmtFee   = canRecordPayment && ["active", "overdue", "disbursed"].includes(loan.status);
+  const canAddProcFee   = canRecordPayment && ["active", "overdue", "disbursed"].includes(loan.status);
+  const canTopUp        = canDisburse && ["active", "overdue"].includes(loan.status) && loan.balanceOutstanding > 0;
 
   return (
     <div className="space-y-6">
@@ -1064,6 +1441,36 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
               onClick={() => setShowTopUpModal(true)}
             >
               Top Up
+            </Button>
+          )}
+          {canAddInterest && (
+            <Button
+              variant="outline"
+              size="sm"
+              icon={<PlusCircle className="w-4 h-4" />}
+              onClick={() => setShowAddInterestModal(true)}
+            >
+              Add Interest
+            </Button>
+          )}
+          {canAddMgmtFee && (
+            <Button
+              variant="outline"
+              size="sm"
+              icon={<PlusCircle className="w-4 h-4" />}
+              onClick={() => setShowAddMgmtFeeModal(true)}
+            >
+              Add Mgmt Fee
+            </Button>
+          )}
+          {canAddProcFee && (
+            <Button
+              variant="outline"
+              size="sm"
+              icon={<PlusCircle className="w-4 h-4" />}
+              onClick={() => setShowAddProcFeeModal(true)}
+            >
+              Add Proc Fee
             </Button>
           )}
           {canWaive && (
@@ -1127,6 +1534,20 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
               border: mgmtFeeRemaining(loan) > 0 ? "border-l-purple-500" : "border-l-gray-200",
             },
           ] : []),
+          ...((loan.processingFeeRate ?? 0) > 0 ? [
+            {
+              label: "Proc Fee Paid",
+              value: formatCurrency(loan.amountRepaidProcessingFee ?? 0),
+              color: "text-sky-600 dark:text-sky-400",
+              border: "border-l-sky-400",
+            },
+            {
+              label: "Proc Fee Remaining",
+              value: formatCurrency(processingFeeRemaining(loan)),
+              color: processingFeeRemaining(loan) > 0 ? "text-sky-700 dark:text-sky-300" : "text-gray-400",
+              border: processingFeeRemaining(loan) > 0 ? "border-l-sky-500" : "border-l-gray-200",
+            },
+          ] : []),
         ] as { label: string; value: string; color: string; border: string }[]).map((s) => (
           <Card key={s.label} className={cn("border-l-4", s.border)}>
             <CardContent className="pt-3 pb-3">
@@ -1179,6 +1600,12 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                   <span className="font-semibold text-purple-600 dark:text-purple-400">{formatCurrency(mgmtFeeRemaining(loan))}</span>
                 </div>
               )}
+              {processingFeeRemaining(loan) > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-sky-500 dark:text-sky-400">Processing Fee Remaining</span>
+                  <span className="font-semibold text-sky-600 dark:text-sky-400">{formatCurrency(processingFeeRemaining(loan))}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-gray-500">
                   {loan.interestMethod === "flat" ? "Interest Remaining" : "Interest (this period)"}
@@ -1193,6 +1620,30 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                   {formatCurrency(loan.penaltyAmount)}
                 </span>
               </div>
+              {(loan.additionalInterest ?? 0) > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-orange-500 dark:text-orange-400">Additional Interest</span>
+                  <span className="font-semibold text-orange-600 dark:text-orange-400">
+                    {formatCurrency(loan.additionalInterest)}
+                  </span>
+                </div>
+              )}
+              {(loan.additionalMgmtFee ?? 0) > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-purple-500 dark:text-purple-400">Additional Mgmt Fee</span>
+                  <span className="font-semibold text-purple-600 dark:text-purple-400">
+                    {formatCurrency(loan.additionalMgmtFee!)}
+                  </span>
+                </div>
+              )}
+              {(loan.additionalProcessingFee ?? 0) > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-sky-500 dark:text-sky-400">Additional Processing Fee</span>
+                  <span className="font-semibold text-sky-600 dark:text-sky-400">
+                    {formatCurrency(loan.additionalProcessingFee!)}
+                  </span>
+                </div>
+              )}
               {loan.penaltyWaived > 0 && (
                 <div className="flex justify-between text-[11px] bg-amber-50 dark:bg-amber-900/10 rounded px-2 py-1 -mx-1">
                   <span className="text-amber-600 dark:text-amber-400">
@@ -1221,12 +1672,13 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
 
       {/* ── Tabs ──────────────────────────────────────────────────────── */}
       <div className="flex gap-1 border-b border-gray-200 dark:border-gray-800 overflow-x-auto">
-        {(["overview", "schedule", "payments", "documents", "contract"] as const).map((t) => {
+        {(["overview", "schedule", "payments", "documents", "contract", "comments"] as const).map((t) => {
           const docs = (loan as any).documents ?? [];
           const label =
             t === "schedule"  ? "Payment Schedule" :
             t === "payments"  ? `Payments (${payments.length})` :
             t === "documents" ? `Documents (${docs.length})` :
+            t === "comments"  ? `Comments (${comments.length})` :
             t.charAt(0).toUpperCase() + t.slice(1);
           return (
             <button
@@ -1259,6 +1711,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                     { label: "Purpose",        value: loan.purpose },
                     { label: "Interest Rate",     value: `${loan.annualInterestRate / 12}%/month (${loan.interestMethod})` },
                     ...(loan.managementFeeRate > 0 ? [{ label: "Mgmt Fee Rate", value: `${loan.managementFeeRate / 12}%/month (per installment)` }] : []),
+                    ...((loan.processingFeeRate ?? 0) > 0 ? [{ label: "Proc Fee Rate", value: `${(loan.processingFeeRate ?? 0) / 12}%/month (per installment)` }] : []),
                     { label: "Repayment",      value: `${loan.repaymentFrequencyDays === 30 ? "Monthly" : loan.repaymentFrequencyDays === 7 ? "Weekly" : loan.repaymentFrequencyDays === 14 ? "Bi-weekly" : `Every ${loan.repaymentFrequencyDays}d`} · ${loan.totalInstallments} installments` },
                     { label: "First Payment",  value: loan.firstPaymentDate ? formatDate(loan.firstPaymentDate) : "—" },
                     { label: "Maturity Date",  value: formatDate(loan.agreedMaturityDate) },
@@ -1268,6 +1721,10 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                     ...(loan.managementFeeRate > 0 ? [
                       { label: "Mgmt Fee Paid",      value: formatCurrency(mgmtFeeRepaid) },
                       { label: "Mgmt Fee Remaining", value: formatCurrency(mgmtFeeRemaining(loan)) },
+                    ] : []),
+                    ...((loan.processingFeeRate ?? 0) > 0 ? [
+                      { label: "Proc Fee Paid",      value: formatCurrency(procFeeRepaid) },
+                      { label: "Proc Fee Remaining", value: formatCurrency(processingFeeRemaining(loan)) },
                     ] : []),
                     ...(loan.branchName ? [{ label: "Branch", value: loan.branchName }] : []),
                   ].map((item) => (
@@ -1429,10 +1886,14 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
             </CardHeader>
             <div className="overflow-x-auto">
               {(() => {
-                const hasMgmtFee = loan.managementFeeRate > 0;
-                const headers = hasMgmtFee
-                  ? ["#", "Due Date", "Principal", "Mgmt Fee", "Interest", "Total Due", "Paid", "Status", ""]
-                  : ["#", "Due Date", "Principal", "Interest", "Total Due", "Paid", "Status", ""];
+                const hasMgmtFee  = loan.managementFeeRate > 0;
+                const hasProcFee  = (loan.processingFeeRate ?? 0) > 0;
+                const headers = [
+                  "#", "Due Date", "Principal",
+                  ...(hasMgmtFee  ? ["Mgmt Fee"]  : []),
+                  ...(hasProcFee  ? ["Proc Fee"]  : []),
+                  "Interest", "Total Due", "Paid", "Status", "",
+                ];
                 return (
                   <table className="w-full">
                     <thead>
@@ -1463,6 +1924,9 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                           <td className="px-4 py-2.5 text-green-600 dark:text-green-400 font-medium">{formatCurrency(row.principalDue)}</td>
                           {hasMgmtFee && (
                             <td className="px-4 py-2.5 text-purple-600 dark:text-purple-400">{formatCurrency(row.managementFeeDue)}</td>
+                          )}
+                          {hasProcFee && (
+                            <td className="px-4 py-2.5 text-sky-600 dark:text-sky-400">{formatCurrency(row.processingFeeDue ?? 0)}</td>
                           )}
                           <td className="px-4 py-2.5 text-amber-600 dark:text-amber-400">{formatCurrency(row.interestDue)}</td>
                           <td className="px-4 py-2.5 font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(row.totalDue)}</td>
@@ -1520,7 +1984,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50">
-                      {["Reference", "Date", "Total", "Principal", "Mgmt Fee", "Interest", "Penalty", "Method", "Recorded By", "Receipt"].map((h) => (
+                      {["Reference", "Date", "Total", "Principal", "Mgmt Fee", "Interest", "Penalty", "Add. Interest", "Method", "Recorded By", "Receipt"].map((h) => (
                         <th key={h} className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 px-4 py-3 first:pl-6">{h}</th>
                       ))}
                     </tr>
@@ -1554,6 +2018,11 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                               : <span className="text-gray-300 dark:text-gray-600">—</span>}
                           </td>
                           <td className="px-4 py-3">
+                            {(p.additionalInterest ?? 0) > 0
+                              ? <span className="font-bold text-orange-600 dark:text-orange-400">{formatCurrency(p.additionalInterest!)}</span>
+                              : <span className="text-gray-300 dark:text-gray-600">—</span>}
+                          </td>
+                          <td className="px-4 py-3">
                             <Badge variant={m.variant} className="text-[10px]">{m.label}</Badge>
                           </td>
                           <td className="px-4 py-3 text-gray-400">{p.recordedByName ?? "—"}</td>
@@ -1583,6 +2052,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                       <td className="px-4 py-3 text-purple-600 dark:text-purple-400">{formatCurrency(payments.reduce((s,p)=>s+(p.managementFee??0),0))}</td>
                       <td className="px-4 py-3 text-amber-600 dark:text-amber-400">{formatCurrency(payments.reduce((s,p)=>s+p.interest,0))}</td>
                       <td className="px-4 py-3 text-red-600 dark:text-red-400">{formatCurrency(payments.reduce((s,p)=>s+p.penalty,0))}</td>
+                      <td className="px-4 py-3 text-orange-600 dark:text-orange-400">{formatCurrency(payments.reduce((s,p)=>s+(p.additionalInterest??0),0))}</td>
                       <td colSpan={3} />
                     </tr>
                   </tfoot>
@@ -1711,6 +2181,113 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
         </motion.div>
       )}
 
+      {/* ── Comments Tab ──────────────────────────────────────────────── */}
+      {activeTab === "comments" && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+          {/* Add comment form */}
+          <Card>
+            <CardContent className="pt-4 pb-4">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center shrink-0 mt-0.5">
+                  <MessageSquare className="w-4 h-4 text-green-600 dark:text-green-400" />
+                </div>
+                <div className="flex-1 space-y-2">
+                  <textarea
+                    value={commentText}
+                    onChange={(e) => setCommentText(e.target.value)}
+                    placeholder="Add a comment or internal note about this loan…"
+                    rows={3}
+                    className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
+                  />
+                  {commentError && <p className="text-xs text-red-500">{commentError}</p>}
+                  <div className="flex justify-end">
+                    <button
+                      disabled={commentLoading || !commentText.trim()}
+                      onClick={async () => {
+                        if (!commentText.trim()) return;
+                        setCommentLoading(true);
+                        setCommentError("");
+                        try {
+                          const res  = await apiFetch(`/api/v1/loans/${loan.id}/comments`, {
+                            method:  "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body:    JSON.stringify({ content: commentText.trim() }),
+                          });
+                          const json = await res.json();
+                          if (!res.ok) { setCommentError(json.error || "Failed to post comment."); return; }
+                          setComments((prev) => [json.data, ...prev]);
+                          setCommentText("");
+                        } catch {
+                          setCommentError("Network error.");
+                        } finally {
+                          setCommentLoading(false);
+                        }
+                      }}
+                      className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold transition-colors"
+                    >
+                      {commentLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                      Post Comment
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Comments list */}
+          {comments.length === 0 ? (
+            <Card>
+              <CardContent className="py-12 text-center">
+                <MessageSquare className="w-8 h-8 text-gray-300 dark:text-gray-600 mx-auto mb-2" />
+                <p className="text-sm text-gray-400 dark:text-gray-500">No comments yet. Be the first to add one.</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-3">
+              {comments.map((c) => (
+                <Card key={c.id}>
+                  <CardContent className="pt-4 pb-4">
+                    <div className="flex items-start gap-3">
+                      <div className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center shrink-0 text-xs font-bold text-gray-600 dark:text-gray-400 uppercase">
+                        {c.createdByName?.charAt(0) ?? "?"}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-semibold text-gray-900 dark:text-gray-100">{c.createdByName}</span>
+                            <span className="text-[10px] capitalize px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">
+                              {c.createdByRole?.replace(/_/g, " ")}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[11px] text-gray-400 dark:text-gray-500">
+                              {new Date(c.createdAt).toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                            </span>
+                            {(c.createdById === (typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}").userId : "") || canApprove) && (
+                              <button
+                                onClick={async () => {
+                                  if (!confirm("Delete this comment?")) return;
+                                  const res = await apiFetch(`/api/v1/loans/${loan.id}/comments?commentId=${c.id}`, { method: "DELETE" });
+                                  if (res.ok) setComments((prev) => prev.filter((x) => x.id !== c.id));
+                                }}
+                                className="text-gray-300 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400 transition-colors"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        <p className="text-sm text-gray-700 dark:text-gray-300 mt-1.5 leading-relaxed whitespace-pre-wrap">{c.content}</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </motion.div>
+      )}
+
       {/* ── Record Payment Modal ───────────────────────────────────────── */}
       <Modal isOpen={showPayModal} onClose={() => setShowPayModal(false)} title="Record Payment" size="md">
         <RecordPaymentForm
@@ -1726,6 +2303,33 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
           loan={loan}
           onClose={() => setShowWaiveModal(false)}
           onSaved={() => { setShowWaiveModal(false); fetchData(); }}
+        />
+      </Modal>
+
+      {/* ── Add Interest Modal ────────────────────────────────────────── */}
+      <Modal isOpen={showAddInterestModal} onClose={() => setShowAddInterestModal(false)} title="Add Additional Interest" size="sm">
+        <AddInterestForm
+          loan={loan}
+          onClose={() => setShowAddInterestModal(false)}
+          onSaved={() => { setShowAddInterestModal(false); fetchData(); }}
+        />
+      </Modal>
+
+      {/* ── Add Additional Management Fee Modal ───────────────────────── */}
+      <Modal isOpen={showAddMgmtFeeModal} onClose={() => setShowAddMgmtFeeModal(false)} title="Add Additional Management Fee" size="sm">
+        <AddMgmtFeeForm
+          loan={loan}
+          onClose={() => setShowAddMgmtFeeModal(false)}
+          onSaved={() => { setShowAddMgmtFeeModal(false); fetchData(); }}
+        />
+      </Modal>
+
+      {/* ── Add Additional Processing Fee Modal ───────────────────────── */}
+      <Modal isOpen={showAddProcFeeModal} onClose={() => setShowAddProcFeeModal(false)} title="Add Additional Processing Fee" size="sm">
+        <AddProcessingFeeForm
+          loan={loan}
+          onClose={() => setShowAddProcFeeModal(false)}
+          onSaved={() => { setShowAddProcFeeModal(false); fetchData(); }}
         />
       </Modal>
 

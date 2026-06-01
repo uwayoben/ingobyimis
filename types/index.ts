@@ -95,6 +95,7 @@ export interface Installment {
   principalDue: number;
   interestDue: number;
   managementFeeDue: number;
+  processingFeeDue: number;
   totalDue: number;
   amountPaid: number;
   paidDate: string | null;
@@ -129,8 +130,11 @@ export interface Loan {
   amountRepaidMgmtFee: number;
   balanceOutstanding: number;
   managementFeeRate: number;
+  processingFeeRate?: number;
   totalInterestScheduled?: number;
   totalMgmtFeeScheduled: number;
+  totalProcessingFeeScheduled?: number;
+  amountRepaidProcessingFee?: number;
   arrearsStartDate?: string;
   daysOverdue: number;
   lastPaymentDate?: string;
@@ -139,6 +143,12 @@ export interface Loan {
   penaltyAmount: number;
   penaltyPaid: number;
   penaltyWaived: number;
+  additionalInterest: number;
+  additionalInterestPaid: number;
+  additionalMgmtFee?: number;
+  additionalMgmtFeePaid?: number;
+  additionalProcessingFee?: number;
+  additionalProcessingFeePaid?: number;
   penaltyWaivedByName?: string;
   penaltyWaivedAt?: string;
   penaltyRatePerDay: number;
@@ -154,12 +164,23 @@ export interface Loan {
   status: LoanStatus;
   isRestructured: boolean;
   topUpAmount: number;
+  signedContractUrl?: string;
   cutoffDate?: string;
   writtenOffDate?: string;
   createdAt: string;
   approvedAt?: string;
   updatedAt: string;
   fees: LoanFee[];
+}
+
+export interface LoanComment {
+  id: string;
+  loanId: string;
+  content: string;
+  createdById: string;
+  createdByName: string;
+  createdByRole: string;
+  createdAt: string;
 }
 
 export interface Payment {
@@ -170,7 +191,11 @@ export interface Payment {
   recordedByName?: string;
   amount: number;
   penalty: number;
+  additionalInterest?: number;
+  additionalMgmtFee?: number;
+  additionalProcessingFee?: number;
   managementFee: number;
+  processingFee?: number;
   interest: number;
   principal: number;
   date: string;

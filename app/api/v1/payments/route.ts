@@ -86,12 +86,13 @@ export async function POST(request: Request) {
       return badRequest("Payments can only be recorded on active or overdue loans.");
     }
     if (loan.status === "completed") {
-      const totalSchedInt       = loan.totalInterestScheduled > 0
+      const totalSchedInt         = loan.totalInterestScheduled > 0
         ? loan.totalInterestScheduled
-        : loan.totalRepayable - loan.amount - (loan.totalMgmtFeeScheduled ?? 0);
-      const remainingIntCheck   = Math.max(0, totalSchedInt - loan.amountRepaidInterest);
-      const remainingMgmtCheck  = Math.max(0, (loan.totalMgmtFeeScheduled ?? 0) - (loan.amountRepaidMgmtFee ?? 0));
-      const stillOwed = loan.balanceOutstanding + remainingIntCheck + remainingMgmtCheck + loan.penaltyAmount;
+        : loan.totalRepayable - loan.amount - (loan.totalMgmtFeeScheduled ?? 0) - ((loan as any).totalProcessingFeeScheduled ?? 0);
+      const remainingIntCheck     = Math.max(0, totalSchedInt - loan.amountRepaidInterest);
+      const remainingMgmtCheck    = Math.max(0, (loan.totalMgmtFeeScheduled ?? 0) - (loan.amountRepaidMgmtFee ?? 0));
+      const remainingProcCheck    = Math.max(0, ((loan as any).totalProcessingFeeScheduled ?? 0) - ((loan as any).amountRepaidProcessingFee ?? 0));
+      const stillOwed = loan.balanceOutstanding + remainingIntCheck + remainingMgmtCheck + remainingProcCheck + loan.penaltyAmount + ((loan as any).additionalInterest ?? 0) + ((loan as any).additionalMgmtFee ?? 0) + ((loan as any).additionalProcessingFee ?? 0);
       if (stillOwed <= 0) {
         return badRequest("This loan is already fully paid.");
       }
@@ -100,14 +101,38 @@ export async function POST(request: Request) {
     const { amount, loanId, method, reference, notes, date, receiptUrl } = parsed.data;
     const paymentDate = date ? new Date(date) : new Date();
 
-    // Auto-allocate waterfall: penalty → management fee → interest → principal
-    let remaining     = amount;
-    const penaltyPaid = Math.min(remaining, loan.penaltyAmount);
-    remaining        -= penaltyPaid;
+    // Auto-allocate waterfall: penalty → additional interest → management fee → processing fee → interest → principal
+    let remaining              = amount;
+    const penaltyPaid          = Math.min(remaining, loan.penaltyAmount);
+    remaining                 -= penaltyPaid;
+    const loanAdditionalInt     = (loan as any).additionalInterest      ?? 0;
+    const loanAdditionalMgmt    = (loan as any).additionalMgmtFee       ?? 0;
+    const loanAdditionalProc    = (loan as any).additionalProcessingFee ?? 0;
+    const additionalIntPaid     = Math.min(remaining, loanAdditionalInt);
+    remaining                  -= additionalIntPaid;
+    const additionalMgmtPaid    = Math.min(remaining, loanAdditionalMgmt);
+    remaining                  -= additionalMgmtPaid;
+    const additionalProcPaid    = Math.min(remaining, loanAdditionalProc);
+    remaining                  -= additionalProcPaid;
 
     const periodsPerYear     = 360 / loan.repaymentFrequencyDays;
-    const periodRate         = Number(loan.annualInterestRate)    / 100 / periodsPerYear;
-    const mgmtFeePeriodRate  = Number(loan.managementFeeRate ?? 0) / 100 / periodsPerYear;
+    const periodRate         = Number(loan.annualInterestRate)         / 100 / periodsPerYear;
+    const mgmtFeePeriodRate  = Number(loan.managementFeeRate ?? 0)     / 100 / periodsPerYear;
+    const procFeePeriodRate  = Number((loan as any).processingFeeRate ?? 0) / 100 / periodsPerYear;
+
+    // Processing fee tracking
+    const totalProcFeeScheduled = (loan as any).totalProcessingFeeScheduled ?? 0;
+    const remainingProcFee      = Math.max(0, totalProcFeeScheduled - ((loan as any).amountRepaidProcessingFee ?? 0));
+
+    let currentProcFee: number;
+    if (loan.interestMethod === "flat") {
+      currentProcFee = Math.min(Math.round(loan.amount * procFeePeriodRate), remainingProcFee);
+    } else {
+      const periodProcFee = loan.balanceOutstanding > 0
+        ? Math.round(loan.balanceOutstanding * procFeePeriodRate)
+        : remainingProcFee;
+      currentProcFee = Math.min(periodProcFee, remainingProcFee);
+    }
 
     // Management fee tracking
     const totalMgmtFeeScheduled = loan.totalMgmtFeeScheduled ?? 0;
@@ -123,10 +148,10 @@ export async function POST(request: Request) {
       currentMgmtFee = Math.min(periodMgmtFee, remainingMgmtFee);
     }
 
-    // Interest tracking — use stored schedule sum to avoid rounding drift vs totalMgmtFeeScheduled
+    // Interest tracking
     const totalScheduledInterest = loan.totalInterestScheduled > 0
       ? loan.totalInterestScheduled
-      : loan.totalRepayable - loan.amount - totalMgmtFeeScheduled; // fallback for old rows
+      : loan.totalRepayable - loan.amount - totalMgmtFeeScheduled - totalProcFeeScheduled;
     const remainingInterest      = Math.max(0, totalScheduledInterest - loan.amountRepaidInterest);
 
     let currentInterest: number;
@@ -139,7 +164,7 @@ export async function POST(request: Request) {
       currentInterest = Math.min(periodInterest, remainingInterest);
     }
 
-    const maxPayable = loan.penaltyAmount + remainingMgmtFee + remainingInterest + loan.balanceOutstanding;
+    const maxPayable = loan.penaltyAmount + loanAdditionalInt + loanAdditionalMgmt + loanAdditionalProc + remainingProcFee + remainingMgmtFee + remainingInterest + loan.balanceOutstanding;
     if (amount > maxPayable) {
       return badRequest(`Amount exceeds total owed. Maximum payment is RWF ${maxPayable.toLocaleString()}.`);
     }
@@ -151,6 +176,11 @@ export async function POST(request: Request) {
     const mgmtFeePaid = Math.min(remaining, mgmtFeeToCredit);
     remaining        -= mgmtFeePaid;
 
+    // Processing fee
+    const procFeeToCredit = isPayoff ? remainingProcFee : currentProcFee;
+    const procFeePaid = Math.min(remaining, procFeeToCredit);
+    remaining        -= procFeePaid;
+
     // Interest
     const interestToCredit = isPayoff ? remainingInterest : currentInterest;
     const interest  = Math.min(remaining, interestToCredit);
@@ -159,15 +189,20 @@ export async function POST(request: Request) {
     // Principal
     const principal = Math.min(remaining, loan.balanceOutstanding);
 
-    const newBalance         = Math.max(0, loan.balanceOutstanding - principal);
-    const newPrincipalRepaid = loan.amountRepaidPrincipal + principal;
-    const newInterestRepaid  = loan.amountRepaidInterest  + interest;
-    const newMgmtFeeRepaid   = (loan.amountRepaidMgmtFee ?? 0) + mgmtFeePaid;
-    const newPenaltyAmount   = loan.penaltyAmount - penaltyPaid;
+    const newBalance             = Math.max(0, loan.balanceOutstanding - principal);
+    const newPrincipalRepaid     = loan.amountRepaidPrincipal + principal;
+    const newInterestRepaid      = loan.amountRepaidInterest  + interest;
+    const newMgmtFeeRepaid       = (loan.amountRepaidMgmtFee ?? 0) + mgmtFeePaid;
+    const newProcFeeRepaid       = ((loan as any).amountRepaidProcessingFee ?? 0) + procFeePaid;
+    const newPenaltyAmount       = loan.penaltyAmount - penaltyPaid;
+    const newAdditionalInterest  = Math.max(0, loanAdditionalInt  - additionalIntPaid);
+    const newAdditionalMgmt      = Math.max(0, loanAdditionalMgmt - additionalMgmtPaid);
+    const newAdditionalProc      = Math.max(0, loanAdditionalProc - additionalProcPaid);
 
     const remainingInterestAfter = Math.max(0, totalScheduledInterest - newInterestRepaid);
     const remainingMgmtFeeAfter  = Math.max(0, totalMgmtFeeScheduled  - newMgmtFeeRepaid);
-    const isFullyPaid = newBalance === 0 && newPenaltyAmount === 0 && remainingInterestAfter === 0 && remainingMgmtFeeAfter === 0;
+    const remainingProcFeeAfter  = Math.max(0, totalProcFeeScheduled   - newProcFeeRepaid);
+    const isFullyPaid = newBalance === 0 && newPenaltyAmount === 0 && newAdditionalInterest === 0 && newAdditionalMgmt === 0 && newAdditionalProc === 0 && remainingInterestAfter === 0 && remainingMgmtFeeAfter === 0 && remainingProcFeeAfter === 0;
 
     // Classification is determined inside the transaction after we know which
     // installments remain overdue post-payment (computed below).
@@ -200,8 +235,12 @@ export async function POST(request: Request) {
           loanId,
           customerId: loan.customerId,
           amount,
-          penalty:       penaltyPaid,
-          managementFee: mgmtFeePaid,
+          penalty:                penaltyPaid,
+          additionalInterest:     additionalIntPaid,
+          additionalMgmtFee:      additionalMgmtPaid,
+          additionalProcessingFee: additionalProcPaid,
+          managementFee:          mgmtFeePaid,
+          processingFee:          procFeePaid,
           interest,
           principal,
           date:        paymentDate,
@@ -274,12 +313,19 @@ export async function POST(request: Request) {
       await tx.loan.update({
         where: { id: loanId },
         data: {
-          amountRepaidPrincipal: newPrincipalRepaid,
-          amountRepaidInterest:  newInterestRepaid,
-          amountRepaidMgmtFee:   newMgmtFeeRepaid,
+          amountRepaidPrincipal:    newPrincipalRepaid,
+          amountRepaidInterest:     newInterestRepaid,
+          amountRepaidMgmtFee:      newMgmtFeeRepaid,
+          amountRepaidProcessingFee: newProcFeeRepaid,
           balanceOutstanding:    newBalance,
           penaltyAmount:         newPenaltyAmount,
           penaltyPaid:           { increment: penaltyPaid },
+          additionalInterest:         newAdditionalInterest,
+          additionalInterestPaid:     { increment: additionalIntPaid },
+          additionalMgmtFee:          newAdditionalMgmt,
+          additionalMgmtFeePaid:      { increment: additionalMgmtPaid },
+          additionalProcessingFee:    newAdditionalProc,
+          additionalProcessingFeePaid: { increment: additionalProcPaid },
           installmentsPaid:      newInstallmentsPaid,
           lastPaymentDate:       paymentDate,
           nextPaymentDate:       nextInst?.dueDate ?? null,
