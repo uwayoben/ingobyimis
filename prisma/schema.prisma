@@ -231,7 +231,7 @@ model Loan {
   penaltyWaived             Int              @default(0)  // cumulative penalty written off
   penaltyWaivedByName       String?
   penaltyWaivedAt           DateTime?
-  penaltyRatePerDay         Decimal          @db.Decimal(5,3) @default(0)   // % of overdue installment per day
+  penaltyRatePerDay         Decimal          @db.Decimal(8,3) @default(0)   // % of overdue installment per day
   lastPenaltyCalculatedAt   DateTime?                                        // last time auto-penalty was applied
   additionalInterest          Int              @default(0)                     // manually-added extra interest outstanding
   additionalInterestPaid      Int              @default(0)                     // cumulative manually-added interest collected
@@ -239,8 +239,8 @@ model Loan {
   additionalMgmtFeePaid       Int              @default(0)                     // cumulative manually-added management fee collected
   additionalProcessingFee     Int              @default(0)                     // manually-added extra processing fee outstanding
   additionalProcessingFeePaid Int              @default(0)                     // cumulative manually-added processing fee collected
-  managementFeeRate         Decimal          @db.Decimal(5,3) @default(0)   // % per period, charged like interest
-  processingFeeRate         Decimal          @db.Decimal(5,3) @default(0)   // % per period, charged like interest
+  managementFeeRate         Decimal          @db.Decimal(8,3) @default(0)   // % per period, charged like interest
+  processingFeeRate         Decimal          @db.Decimal(8,3) @default(0)   // % per period, charged like interest
   totalInterestScheduled    Int              @default(0)                     // sum of interestDue from generated schedule
   totalMgmtFeeScheduled     Int              @default(0)                     // sum of managementFeeDue from generated schedule
   totalProcessingFeeScheduled Int            @default(0)                     // sum of processingFeeDue from generated schedule
