@@ -4,14 +4,30 @@ import { created, paginated, unauthorized, badRequest, forbidden, notFound, serv
 import { classifyLoan } from "@/lib/loan-schedule";
 import { z } from "zod";
 
+const manualAllocationSchema = z.object({
+  penalty:                z.number().min(0).default(0),
+  additionalInterest:     z.number().min(0).default(0),
+  additionalMgmtFee:      z.number().min(0).default(0),
+  additionalProcessingFee:z.number().min(0).default(0),
+  managementFee:          z.number().min(0).default(0),
+  processingFee:          z.number().min(0).default(0),
+  interest:               z.number().min(0).default(0),
+  principal:              z.number().min(0).default(0),
+});
+
 const createSchema = z.object({
-  loanId:     z.string(),
-  amount:     z.number().positive(),
-  method:     z.enum(["cash", "bank_transfer", "mobile_money"]),
-  reference:  z.string().min(1),
-  notes:      z.string().optional(),
-  date:       z.string().optional(),
-  receiptUrl: z.string().url().optional(),
+  loanId:                z.string(),
+  amount:                z.number().positive(),
+  method:                z.enum(["cash", "bank_transfer", "mobile_money"]),
+  reference:             z.string().optional(),
+  notes:                 z.string().optional(),
+  date:                  z.string().optional(),
+  receiptUrl:            z.string().url().optional(),
+  manualAllocation:      manualAllocationSchema.optional(),
+  earlySettlementWaiver:    z.boolean().optional(),
+  waivedInterestAmount:     z.number().min(0).optional(),
+  waivedMgmtFeeAmount:      z.number().min(0).optional(),
+  waivedProcFeeAmount:      z.number().min(0).optional(),
 });
 
 export async function GET(request: Request) {
@@ -27,8 +43,10 @@ export async function GET(request: Request) {
 
     const loanId = searchParams.get("loanId");
 
+    const isSuperAdmin = auth.role === "super_admin";
+
     const where = {
-      companyId: auth.companyId!,
+      ...(isSuperAdmin ? {} : { companyId: auth.companyId! }),
       ...(loanId && { loanId }),
       ...(search && {
         OR: [
@@ -69,15 +87,18 @@ export async function POST(request: Request) {
   try {
     const auth = getAuthUser(request);
     if (!auth) return unauthorized();
-    if (!["managing_director", "loan_officer", "receptionist"].includes(auth.role)) return forbidden();
-    if (!auth.companyId) return forbidden("Company context required.");
+    if (!["managing_director", "loan_officer", "receptionist", "super_admin"].includes(auth.role)) return forbidden();
+    const isSuperAdminPost = auth.role === "super_admin";
+    if (!isSuperAdminPost && !auth.companyId) return forbidden("Company context required.");
 
     const body   = await request.json();
     const parsed = createSchema.safeParse(body);
     if (!parsed.success) return badRequest(parsed.error.issues[0].message);
 
     const loan = await prisma.loan.findFirst({
-      where: { id: parsed.data.loanId, companyId: auth.companyId! },
+      where: isSuperAdminPost
+        ? { id: parsed.data.loanId }
+        : { id: parsed.data.loanId, companyId: auth.companyId! },
     });
     if (!loan) return notFound("Loan not found.");
     // Also allow "completed" status here in case the loan was prematurely closed
@@ -98,96 +119,137 @@ export async function POST(request: Request) {
       }
     }
 
-    const { amount, loanId, method, reference, notes, date, receiptUrl } = parsed.data;
+    const { amount, loanId, method, notes, date, receiptUrl, manualAllocation,
+            earlySettlementWaiver, waivedInterestAmount,
+            waivedMgmtFeeAmount, waivedProcFeeAmount } = parsed.data;
+    const reference = parsed.data.reference?.trim() || `PAY-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
     const paymentDate = date ? new Date(date) : new Date();
 
-    // Auto-allocate waterfall: penalty → additional interest → management fee → processing fee → interest → principal
-    let remaining              = amount;
-    const penaltyPaid          = Math.min(remaining, loan.penaltyAmount);
-    remaining                 -= penaltyPaid;
-    const loanAdditionalInt     = (loan as any).additionalInterest      ?? 0;
-    const loanAdditionalMgmt    = (loan as any).additionalMgmtFee       ?? 0;
-    const loanAdditionalProc    = (loan as any).additionalProcessingFee ?? 0;
-    const additionalIntPaid     = Math.min(remaining, loanAdditionalInt);
-    remaining                  -= additionalIntPaid;
-    const additionalMgmtPaid    = Math.min(remaining, loanAdditionalMgmt);
-    remaining                  -= additionalMgmtPaid;
-    const additionalProcPaid    = Math.min(remaining, loanAdditionalProc);
-    remaining                  -= additionalProcPaid;
+    const loanAdditionalInt  = (loan as any).additionalInterest      ?? 0;
+    const loanAdditionalMgmt = (loan as any).additionalMgmtFee       ?? 0;
+    const loanAdditionalProc = (loan as any).additionalProcessingFee ?? 0;
 
     const periodsPerYear     = 360 / loan.repaymentFrequencyDays;
-    const periodRate         = Number(loan.annualInterestRate)         / 100 / periodsPerYear;
-    const mgmtFeePeriodRate  = Number(loan.managementFeeRate ?? 0)     / 100 / periodsPerYear;
+    const periodRate         = Number(loan.annualInterestRate)             / 100 / periodsPerYear;
+    const mgmtFeePeriodRate  = Number(loan.managementFeeRate ?? 0)         / 100 / periodsPerYear;
     const procFeePeriodRate  = Number((loan as any).processingFeeRate ?? 0) / 100 / periodsPerYear;
 
-    // Processing fee tracking
-    const totalProcFeeScheduled = (loan as any).totalProcessingFeeScheduled ?? 0;
-    const remainingProcFee      = Math.max(0, totalProcFeeScheduled - ((loan as any).amountRepaidProcessingFee ?? 0));
-
-    let currentProcFee: number;
-    if (loan.interestMethod === "flat") {
-      currentProcFee = Math.min(Math.round(loan.amount * procFeePeriodRate), remainingProcFee);
-    } else {
-      const periodProcFee = loan.balanceOutstanding > 0
-        ? Math.round(loan.balanceOutstanding * procFeePeriodRate)
-        : remainingProcFee;
-      currentProcFee = Math.min(periodProcFee, remainingProcFee);
-    }
-
-    // Management fee tracking
-    const totalMgmtFeeScheduled = loan.totalMgmtFeeScheduled ?? 0;
-    const remainingMgmtFee      = Math.max(0, totalMgmtFeeScheduled - (loan.amountRepaidMgmtFee ?? 0));
-
-    let currentMgmtFee: number;
-    if (loan.interestMethod === "flat") {
-      currentMgmtFee = Math.min(Math.round(loan.amount * mgmtFeePeriodRate), remainingMgmtFee);
-    } else {
-      const periodMgmtFee = loan.balanceOutstanding > 0
-        ? Math.round(loan.balanceOutstanding * mgmtFeePeriodRate)
-        : remainingMgmtFee;
-      currentMgmtFee = Math.min(periodMgmtFee, remainingMgmtFee);
-    }
-
-    // Interest tracking
+    const totalProcFeeScheduled  = (loan as any).totalProcessingFeeScheduled ?? 0;
+    const remainingProcFee       = Math.max(0, totalProcFeeScheduled - ((loan as any).amountRepaidProcessingFee ?? 0));
+    const totalMgmtFeeScheduled  = loan.totalMgmtFeeScheduled ?? 0;
+    const remainingMgmtFee       = Math.max(0, totalMgmtFeeScheduled - (loan.amountRepaidMgmtFee ?? 0));
     const totalScheduledInterest = loan.totalInterestScheduled > 0
       ? loan.totalInterestScheduled
       : loan.totalRepayable - loan.amount - totalMgmtFeeScheduled - totalProcFeeScheduled;
-    const remainingInterest      = Math.max(0, totalScheduledInterest - loan.amountRepaidInterest);
+    const remainingInterestFull  = Math.max(0, totalScheduledInterest - loan.amountRepaidInterest);
 
-    let currentInterest: number;
-    if (loan.interestMethod === "flat") {
-      currentInterest = Math.min(Math.round(loan.amount * periodRate), remainingInterest);
+    const waivedAmt     = earlySettlementWaiver ? Math.min(waivedInterestAmount  ?? remainingInterestFull, remainingInterestFull) : 0;
+    const waivedMgmtAmt = earlySettlementWaiver ? Math.min(waivedMgmtFeeAmount   ?? 0,                     remainingMgmtFee)       : 0;
+    const waivedProcAmt = earlySettlementWaiver ? Math.min(waivedProcFeeAmount   ?? 0,                     remainingProcFee)       : 0;
+    const totalWaived   = waivedAmt + waivedMgmtAmt + waivedProcAmt;
+
+    // maxPayable = full outstanding (waivers write off scheduled amounts, not reduce what's owed now)
+    const maxPayable = loan.penaltyAmount + loanAdditionalInt + loanAdditionalMgmt + loanAdditionalProc + remainingProcFee + remainingMgmtFee + remainingInterestFull + loan.balanceOutstanding;
+
+    // What the borrower actually needs to pay = outstanding minus all waived portions
+    const maxRequired = maxPayable - totalWaived;
+    if (amount > maxRequired) {
+      return badRequest(`Amount exceeds what is required. Maximum payment is RWF ${maxRequired.toLocaleString()}${totalWaived > 0 ? ` (RWF ${totalWaived.toLocaleString()} is being waived)` : ""}.`);
+    }
+
+    // For allocation, each bucket = full remaining minus its waived portion
+    const remainingInterest = remainingInterestFull - waivedAmt;
+    const remainingMgmtFeeNet = remainingMgmtFee - waivedMgmtAmt;
+    const remainingProcFeeNet = remainingProcFee  - waivedProcAmt;
+
+    let penaltyPaid: number;
+    let additionalIntPaid: number;
+    let additionalMgmtPaid: number;
+    let additionalProcPaid: number;
+    let mgmtFeePaid: number;
+    let procFeePaid: number;
+    let interest: number;
+    let principal: number;
+
+    if (manualAllocation) {
+      // Manual mode — validate each bucket doesn't exceed what's owed
+      if (manualAllocation.penalty > loan.penaltyAmount)
+        return badRequest(`Penalty allocation (${manualAllocation.penalty}) exceeds outstanding penalty (${loan.penaltyAmount}).`);
+      if (manualAllocation.additionalInterest > loanAdditionalInt)
+        return badRequest(`Additional interest allocation exceeds outstanding amount.`);
+      if (manualAllocation.additionalMgmtFee > loanAdditionalMgmt)
+        return badRequest(`Additional management fee allocation exceeds outstanding amount.`);
+      if (manualAllocation.additionalProcessingFee > loanAdditionalProc)
+        return badRequest(`Additional processing fee allocation exceeds outstanding amount.`);
+      if (manualAllocation.managementFee > remainingMgmtFeeNet)
+        return badRequest(`Management fee allocation (RWF ${manualAllocation.managementFee.toLocaleString()}) exceeds remaining after waiver (RWF ${remainingMgmtFeeNet.toLocaleString()}).`);
+      if (manualAllocation.processingFee > remainingProcFeeNet)
+        return badRequest(`Processing fee allocation (RWF ${manualAllocation.processingFee.toLocaleString()}) exceeds remaining after waiver (RWF ${remainingProcFeeNet.toLocaleString()}).`);
+      if (waivedMgmtAmt > 0 && manualAllocation.managementFee + waivedMgmtAmt > remainingMgmtFee)
+        return badRequest(`Management fee paid plus waived exceeds remaining scheduled management fee.`);
+      if (waivedProcAmt > 0 && manualAllocation.processingFee + waivedProcAmt > remainingProcFee)
+        return badRequest(`Processing fee paid plus waived exceeds remaining scheduled processing fee.`);
+      if (manualAllocation.interest > remainingInterestFull)
+        return badRequest(`Interest allocation (RWF ${manualAllocation.interest.toLocaleString()}) exceeds remaining interest (RWF ${remainingInterestFull.toLocaleString()}).`);
+      if (waivedAmt > 0 && manualAllocation.interest + waivedAmt > remainingInterestFull)
+        return badRequest(`Interest paid (${manualAllocation.interest.toLocaleString()}) plus waived (${waivedAmt.toLocaleString()}) exceeds remaining interest (${remainingInterestFull.toLocaleString()}).`);
+      if (manualAllocation.principal > loan.balanceOutstanding)
+        return badRequest(`Principal allocation exceeds outstanding balance.`);
+
+      const manualTotal = manualAllocation.penalty + manualAllocation.additionalInterest +
+        manualAllocation.additionalMgmtFee + manualAllocation.additionalProcessingFee +
+        manualAllocation.managementFee + manualAllocation.processingFee +
+        manualAllocation.interest + manualAllocation.principal;
+      if (Math.abs(manualTotal - amount) > 1)
+        return badRequest(`Manual allocation total (${manualTotal}) does not match payment amount (${amount}).`);
+
+      penaltyPaid        = manualAllocation.penalty;
+      additionalIntPaid  = manualAllocation.additionalInterest;
+      additionalMgmtPaid = manualAllocation.additionalMgmtFee;
+      additionalProcPaid = manualAllocation.additionalProcessingFee;
+      mgmtFeePaid        = manualAllocation.managementFee;
+      procFeePaid        = manualAllocation.processingFee;
+      interest           = manualAllocation.interest;
+      principal          = manualAllocation.principal;
     } else {
-      const periodInterest = loan.balanceOutstanding > 0
-        ? Math.round(loan.balanceOutstanding * periodRate)
-        : remainingInterest;
-      currentInterest = Math.min(periodInterest, remainingInterest);
+      // Auto waterfall: penalty → additional interest → additional mgmt → additional proc → mgmt fee → proc fee → interest → principal
+      let remaining     = amount;
+      penaltyPaid        = Math.min(remaining, loan.penaltyAmount);          remaining -= penaltyPaid;
+      additionalIntPaid  = Math.min(remaining, loanAdditionalInt);           remaining -= additionalIntPaid;
+      additionalMgmtPaid = Math.min(remaining, loanAdditionalMgmt);         remaining -= additionalMgmtPaid;
+      additionalProcPaid = Math.min(remaining, loanAdditionalProc);         remaining -= additionalProcPaid;
+
+      const isPayoff = amount >= maxPayable;
+
+      let currentMgmtFee: number;
+      if (loan.interestMethod === "flat") {
+        currentMgmtFee = Math.min(Math.round(loan.amount * mgmtFeePeriodRate), remainingMgmtFee);
+      } else {
+        const periodMgmtFee = loan.balanceOutstanding > 0 ? Math.round(loan.balanceOutstanding * mgmtFeePeriodRate) : remainingMgmtFee;
+        currentMgmtFee = Math.min(periodMgmtFee, remainingMgmtFee);
+      }
+
+      let currentProcFee: number;
+      if (loan.interestMethod === "flat") {
+        currentProcFee = Math.min(Math.round(loan.amount * procFeePeriodRate), remainingProcFee);
+      } else {
+        const periodProcFee = loan.balanceOutstanding > 0 ? Math.round(loan.balanceOutstanding * procFeePeriodRate) : remainingProcFee;
+        currentProcFee = Math.min(periodProcFee, remainingProcFee);
+      }
+
+      let currentInterest: number;
+      if (loan.interestMethod === "flat") {
+        currentInterest = Math.min(Math.round(loan.amount * periodRate), remainingInterest);
+      } else {
+        const periodInterest = loan.balanceOutstanding > 0 ? Math.round(loan.balanceOutstanding * periodRate) : remainingInterest;
+        currentInterest = Math.min(periodInterest, remainingInterest);
+      }
+
+      mgmtFeePaid = Math.min(remaining, isPayoff ? remainingMgmtFeeNet : currentMgmtFee); remaining -= mgmtFeePaid;
+      procFeePaid = Math.min(remaining, isPayoff ? remainingProcFeeNet : currentProcFee);  remaining -= procFeePaid;
+      interest    = Math.min(remaining, isPayoff ? remainingInterest   : currentInterest); remaining -= interest;
+      principal   = Math.min(remaining, loan.balanceOutstanding);
     }
-
-    const maxPayable = loan.penaltyAmount + loanAdditionalInt + loanAdditionalMgmt + loanAdditionalProc + remainingProcFee + remainingMgmtFee + remainingInterest + loan.balanceOutstanding;
-    if (amount > maxPayable) {
-      return badRequest(`Amount exceeds total owed. Maximum payment is RWF ${maxPayable.toLocaleString()}.`);
-    }
-
-    const isPayoff = amount >= maxPayable;
-
-    // Management fee
-    const mgmtFeeToCredit = isPayoff ? remainingMgmtFee : currentMgmtFee;
-    const mgmtFeePaid = Math.min(remaining, mgmtFeeToCredit);
-    remaining        -= mgmtFeePaid;
-
-    // Processing fee
-    const procFeeToCredit = isPayoff ? remainingProcFee : currentProcFee;
-    const procFeePaid = Math.min(remaining, procFeeToCredit);
-    remaining        -= procFeePaid;
-
-    // Interest
-    const interestToCredit = isPayoff ? remainingInterest : currentInterest;
-    const interest  = Math.min(remaining, interestToCredit);
-    remaining      -= interest;
-
-    // Principal
-    const principal = Math.min(remaining, loan.balanceOutstanding);
 
     const newBalance             = Math.max(0, loan.balanceOutstanding - principal);
     const newPrincipalRepaid     = loan.amountRepaidPrincipal + principal;
@@ -199,26 +261,28 @@ export async function POST(request: Request) {
     const newAdditionalMgmt      = Math.max(0, loanAdditionalMgmt - additionalMgmtPaid);
     const newAdditionalProc      = Math.max(0, loanAdditionalProc - additionalProcPaid);
 
-    const remainingInterestAfter = Math.max(0, totalScheduledInterest - newInterestRepaid);
-    const remainingMgmtFeeAfter  = Math.max(0, totalMgmtFeeScheduled  - newMgmtFeeRepaid);
-    const remainingProcFeeAfter  = Math.max(0, totalProcFeeScheduled   - newProcFeeRepaid);
+    const remainingInterestAfter = Math.max(0, totalScheduledInterest - newInterestRepaid - waivedAmt);
+    const remainingMgmtFeeAfter  = Math.max(0, totalMgmtFeeScheduled  - newMgmtFeeRepaid  - waivedMgmtAmt);
+    const remainingProcFeeAfter  = Math.max(0, totalProcFeeScheduled   - newProcFeeRepaid  - waivedProcAmt);
     const isFullyPaid = newBalance === 0 && newPenaltyAmount === 0 && newAdditionalInterest === 0 && newAdditionalMgmt === 0 && newAdditionalProc === 0 && remainingInterestAfter === 0 && remainingMgmtFeeAfter === 0 && remainingProcFeeAfter === 0;
 
     // Classification is determined inside the transaction after we know which
     // installments remain overdue post-payment (computed below).
 
+    const effectiveCompanyId = auth.companyId ?? loan.companyId;
+
     const payment = await prisma.$transaction(async (tx) => {
       // Credit company account balance
       const company = await tx.company.findUnique({
-        where: { id: auth.companyId! },
+        where: { id: effectiveCompanyId },
         select: { accountBalance: true },
       });
       const balBefore = company?.accountBalance ?? 0;
       const balAfter  = balBefore + amount;
-      await tx.company.update({ where: { id: auth.companyId! }, data: { accountBalance: balAfter } });
+      await tx.company.update({ where: { id: effectiveCompanyId }, data: { accountBalance: balAfter } });
       await tx.ledgerEntry.create({
         data: {
-          companyId:     auth.companyId!,
+          companyId:     effectiveCompanyId,
           type:          "repayment",
           amount,
           balanceBefore: balBefore,
@@ -249,7 +313,7 @@ export async function POST(request: Request) {
           notes,
           receiptUrl,
           recordedById: auth.userId,
-          companyId:    auth.companyId!,
+          companyId:    effectiveCompanyId,
         },
       });
 
@@ -338,6 +402,10 @@ export async function POST(request: Request) {
           // Reset lastPenaltyCalculatedAt so the penalty counter restarts cleanly
           ...(caughtUp && { lastPenaltyCalculatedAt: null }),
           status: isFullyPaid ? "completed" : caughtUp ? "active" : "overdue",
+          // Early settlement: reduce scheduled totals so remaining = 0 for waived portions
+          ...(waivedAmt     > 0 && { totalInterestScheduled:       { decrement: waivedAmt     } }),
+          ...(waivedMgmtAmt > 0 && { totalMgmtFeeScheduled:        { decrement: waivedMgmtAmt } }),
+          ...(waivedProcAmt > 0 && { totalProcessingFeeScheduled:  { decrement: waivedProcAmt } }),
         },
       });
 

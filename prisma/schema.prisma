@@ -195,6 +195,7 @@ model Loan {
   // Basic loan info
   branchName              String?
   purpose                 String
+  economicSector          String?
   amount                  Int                     // principal applied for
 
   // Disbursement

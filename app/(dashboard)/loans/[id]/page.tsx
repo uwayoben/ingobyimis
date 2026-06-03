@@ -107,14 +107,14 @@ function openInstallmentInvoice(
 </head>
 <body>
   <div class="toolbar">
-    <button class="dl-btn" onclick="downloadInvoice()">⬇ Download</button>
+    <button class="dl-btn" onclick="downloadInvoice()">⬇ Download PDF</button>
     <button class="print-btn" onclick="window.print()">🖨 Print / PDF</button>
   </div>
   <div class="page">
     <div class="header">
       <div>
         <div class="co-name">${companyName}</div>
-        <div class="co-sub">Microfinance Institution</div>
+        <div class="co-sub">NDFSP</div>
       </div>
       <div class="inv-title">
         <h1>PAYMENT NOTICE</h1>
@@ -170,14 +170,21 @@ function openInstallmentInvoice(
       </div>
     </div>
   </div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <script>
     function downloadInvoice(){
-      var blob=new Blob([document.documentElement.outerHTML],{type:'text/html'});
-      var url=URL.createObjectURL(blob);
-      var a=document.createElement('a');
-      a.href=url;a.download='${refNo}.html';
-      document.body.appendChild(a);a.click();
-      document.body.removeChild(a);URL.revokeObjectURL(url);
+      var btn=document.querySelector('.dl-btn');
+      if(btn){btn.disabled=true;btn.textContent='Generating PDF…';}
+      var opt={
+        margin:[10,10,10,10],
+        filename:'${refNo}.pdf',
+        image:{type:'jpeg',quality:0.98},
+        html2canvas:{scale:2,useCORS:true,logging:false},
+        jsPDF:{unit:'mm',format:'a4',orientation:'portrait'}
+      };
+      html2pdf().set(opt).from(document.querySelector('.page')).save().then(function(){
+        if(btn){btn.disabled=false;btn.textContent='⬇ Download PDF';}
+      });
     }
     window.onload=()=>window.print();
   </script>
@@ -313,7 +320,14 @@ function RecordPaymentForm({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [amount, setAmount]           = useState("");
+  const [mode, setMode]                     = useState<"auto" | "manual">("auto");
+  const [amount, setAmount]                 = useState("");
+  const [waiveInterest, setWaiveInterest]         = useState(false);
+  const [waivedAmountInput, setWaivedAmountInput] = useState("");
+  const [waiveMgmtFee, setWaiveMgmtFee]           = useState(false);
+  const [waivedMgmtInput, setWaivedMgmtInput]     = useState("");
+  const [waiveProcFee, setWaiveProcFee]           = useState(false);
+  const [waivedProcInput, setWaivedProcInput]     = useState("");
   const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [method, setMethod]           = useState("cash");
   const [reference, setReference]     = useState("");
@@ -323,54 +337,72 @@ function RecordPaymentForm({
   const [loading, setLoading]         = useState(false);
   const [error, setError]             = useState("");
 
-  const penalty          = loan.penaltyAmount;
-  const addlInterest     = loan.additionalInterest    ?? 0;
-  const addlMgmtFee      = loan.additionalMgmtFee     ?? 0;
-  const addlProcFee      = loan.additionalProcessingFee ?? 0;
-  const totalOuts        = trueOutstanding(loan);
-  const amt              = Math.min(Number(amount) || 0, totalOuts);
+  // Manual allocation fields (strings for controlled inputs)
+  const [mPenalty,     setMPenalty]     = useState("0");
+  const [mAddlInt,     setMAddlInt]     = useState("0");
+  const [mAddlMgmt,    setMAddlMgmt]    = useState("0");
+  const [mAddlProc,    setMAddlProc]    = useState("0");
+  const [mMgmtFee,     setMMgmtFee]     = useState("0");
+  const [mProcFee,     setMProcFee]     = useState("0");
+  const [mInterest,    setMInterest]    = useState("0");
+  const [mPrincipal,   setMPrincipal]   = useState("0");
+
+  const penalty      = loan.penaltyAmount;
+  const addlInterest = loan.additionalInterest    ?? 0;
+  const addlMgmtFee  = loan.additionalMgmtFee     ?? 0;
+  const addlProcFee  = loan.additionalProcessingFee ?? 0;
+  const totalOuts    = trueOutstanding(loan);
 
   const periodsPerYear    = 360 / loan.repaymentFrequencyDays;
-  const periodRate        = Number(loan.annualInterestRate)         / 100 / periodsPerYear;
-  const mgmtFeePeriodRate = Number(loan.managementFeeRate ?? 0)     / 100 / periodsPerYear;
-  const procFeePeriodRate = Number(loan.processingFeeRate ?? 0)     / 100 / periodsPerYear;
+  const periodRate        = Number(loan.annualInterestRate)     / 100 / periodsPerYear;
+  const mgmtFeePeriodRate = Number(loan.managementFeeRate ?? 0) / 100 / periodsPerYear;
+  const procFeePeriodRate = Number(loan.processingFeeRate ?? 0) / 100 / periodsPerYear;
 
-  const remainingProcFee  = processingFeeRemaining(loan);
-  const periodProcFee     = loan.balanceOutstanding > 0
-    ? Math.round(loan.balanceOutstanding * procFeePeriodRate) : remainingProcFee;
-  const currentProcFee    = Math.min(periodProcFee, remainingProcFee);
-
-  const remainingMgmtFee  = mgmtFeeRemaining(loan);
-  const periodMgmtFee     = loan.balanceOutstanding > 0
-    ? Math.round(loan.balanceOutstanding * mgmtFeePeriodRate) : remainingMgmtFee;
-  const currentMgmtFee    = Math.min(periodMgmtFee, remainingMgmtFee);
-
+  const remainingProcFee = processingFeeRemaining(loan);
+  const currentProcFee   = Math.min(
+    loan.balanceOutstanding > 0 ? Math.round(loan.balanceOutstanding * procFeePeriodRate) : remainingProcFee,
+    remainingProcFee,
+  );
+  const remainingMgmtFee = mgmtFeeRemaining(loan);
+  const currentMgmtFee   = Math.min(
+    loan.balanceOutstanding > 0 ? Math.round(loan.balanceOutstanding * mgmtFeePeriodRate) : remainingMgmtFee,
+    remainingMgmtFee,
+  );
   const remainingInt   = interestRemaining(loan);
-  const periodInterest = loan.balanceOutstanding > 0
-    ? Math.round(loan.balanceOutstanding * periodRate) : remainingInt;
-  const currentInt     = Math.min(periodInterest, remainingInt);
+  const currentInt     = Math.min(
+    loan.balanceOutstanding > 0 ? Math.round(loan.balanceOutstanding * periodRate) : remainingInt,
+    remainingInt,
+  );
 
-  const isPayoffPreview = amt >= (penalty + addlInterest + addlMgmtFee + addlProcFee + remainingProcFee + remainingMgmtFee + remainingInt + loan.balanceOutstanding);
+  // ── Auto preview ──
+  const amt = Math.min(Number(amount) || 0, totalOuts);
+  const isPayoffPreview = amt >= totalOuts;
+  let r0 = amt;
+  const autoPenalty    = Math.min(r0, penalty);                                                   r0 -= autoPenalty;
+  const autoAddlInt    = Math.min(r0, addlInterest);                                              r0 -= autoAddlInt;
+  const autoAddlMgmt   = Math.min(r0, addlMgmtFee);                                              r0 -= autoAddlMgmt;
+  const autoAddlProc   = Math.min(r0, addlProcFee);                                              r0 -= autoAddlProc;
+  const autoMgmtFee    = Math.min(r0, isPayoffPreview ? remainingMgmtFee : currentMgmtFee);      r0 -= autoMgmtFee;
+  const autoProcFee    = Math.min(r0, isPayoffPreview ? remainingProcFee : currentProcFee);       r0 -= autoProcFee;
+  const autoInterest   = Math.min(r0, isPayoffPreview ? remainingInt     : currentInt);           r0 -= autoInterest;
+  const autoPrincipal  = r0;
 
-  let remaining0              = amt;
-  const penaltyPaid           = Math.min(remaining0, penalty);                                                         remaining0 -= penaltyPaid;
-  const addlInterestPreview   = Math.min(remaining0, addlInterest);                                                    remaining0 -= addlInterestPreview;
-  const addlMgmtFeePreview    = Math.min(remaining0, addlMgmtFee);                                                     remaining0 -= addlMgmtFeePreview;
-  const addlProcFeePreview    = Math.min(remaining0, addlProcFee);                                                      remaining0 -= addlProcFeePreview;
-  const mgmtFeePreview        = Math.min(remaining0, isPayoffPreview ? remainingMgmtFee : currentMgmtFee);             remaining0 -= mgmtFeePreview;
-  const procFeePreview        = Math.min(remaining0, isPayoffPreview ? remainingProcFee : currentProcFee);              remaining0 -= procFeePreview;
-  const interest              = Math.min(remaining0, isPayoffPreview ? remainingInt : currentInt);                     remaining0 -= interest;
-  const principal             = remaining0;
+  // ── Manual total & validation ──
+  const manualTotal = Number(mPenalty) + Number(mAddlInt) + Number(mAddlMgmt) + Number(mAddlProc) +
+    Number(mMgmtFee) + Number(mProcFee) + Number(mInterest) + Number(mPrincipal);
+  const manualBalanceOk = Math.abs(manualTotal - (Number(amount) || 0)) <= 1;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    if (!amount || !reference) { setError("Amount and reference are required."); return; }
     const parsed = Number(amount);
     if (!parsed || parsed <= 0) { setError("Enter a valid amount."); return; }
+    if (mode === "manual" && !manualBalanceOk) {
+      setError(`Manual allocation total (${formatCurrency(manualTotal)}) must equal the payment amount (${formatCurrency(parsed)}).`);
+      return;
+    }
 
     let receiptUrl: string | undefined;
-
     if (receiptFile) {
       setUploading(true);
       try {
@@ -392,10 +424,51 @@ function RecordPaymentForm({
 
     setLoading(true);
     try {
-      const res = await apiFetch("/api/v1/payments", {
+      const body: Record<string, unknown> = {
+        loanId: loan.id, amount: parsed, date: paymentDate, method, reference,
+        notes: notes || undefined, receiptUrl,
+      };
+      if (mode === "manual") {
+        body.manualAllocation = {
+          penalty:                 Number(mPenalty)  || 0,
+          additionalInterest:      Number(mAddlInt)  || 0,
+          additionalMgmtFee:       Number(mAddlMgmt) || 0,
+          additionalProcessingFee: Number(mAddlProc) || 0,
+          managementFee:           Number(mMgmtFee)  || 0,
+          processingFee:           Number(mProcFee)  || 0,
+          interest:                Number(mInterest) || 0,
+          principal:               Number(mPrincipal)|| 0,
+        };
+      }
+      const waivedAmt     = Number(waivedAmountInput) || 0;
+      const waivedMgmtAmt = Number(waivedMgmtInput)  || 0;
+      const waivedProcAmt = Number(waivedProcInput)   || 0;
+
+      if (waiveInterest) {
+        const maxWaivable = Math.max(0, remainingInt - (Number(mInterest) || 0));
+        if (!waivedAmt || waivedAmt <= 0) { setError("Enter the interest amount to waive."); return; }
+        if (waivedAmt > maxWaivable) { setError(`Waived interest cannot exceed ${formatCurrency(maxWaivable)}.`); return; }
+      }
+      if (waiveMgmtFee) {
+        const maxWaivable = Math.max(0, remainingMgmtFee - (Number(mMgmtFee) || 0));
+        if (!waivedMgmtAmt || waivedMgmtAmt <= 0) { setError("Enter the management fee amount to waive."); return; }
+        if (waivedMgmtAmt > maxWaivable) { setError(`Waived management fee cannot exceed ${formatCurrency(maxWaivable)}.`); return; }
+      }
+      if (waiveProcFee) {
+        const maxWaivable = Math.max(0, remainingProcFee - (Number(mProcFee) || 0));
+        if (!waivedProcAmt || waivedProcAmt <= 0) { setError("Enter the processing fee amount to waive."); return; }
+        if (waivedProcAmt > maxWaivable) { setError(`Waived processing fee cannot exceed ${formatCurrency(maxWaivable)}.`); return; }
+      }
+      if (waiveInterest || waiveMgmtFee || waiveProcFee) {
+        body.earlySettlementWaiver = true;
+        if (waivedAmt     > 0) body.waivedInterestAmount = waivedAmt;
+        if (waivedMgmtAmt > 0) body.waivedMgmtFeeAmount  = waivedMgmtAmt;
+        if (waivedProcAmt > 0) body.waivedProcFeeAmount   = waivedProcAmt;
+      }
+      const res  = await apiFetch("/api/v1/payments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ loanId: loan.id, amount: parsed, date: paymentDate, method, reference, notes: notes || undefined, receiptUrl }),
+        body: JSON.stringify(body),
       });
       const json = await res.json();
       if (!res.ok) { setError(json.error || "Failed to record payment."); return; }
@@ -407,20 +480,31 @@ function RecordPaymentForm({
     }
   };
 
+  const manualBuckets = [
+    { key: "penalty",     label: "Penalty",           color: "text-red-600 dark:text-red-400",      max: penalty,      val: mPenalty,   set: setMPenalty,   show: penalty > 0 },
+    { key: "addlInt",     label: "Additional Interest",color: "text-orange-600 dark:text-orange-400",max: addlInterest, val: mAddlInt,   set: setMAddlInt,   show: addlInterest > 0 },
+    { key: "addlMgmt",    label: "Additional Mgmt Fee",color: "text-purple-600 dark:text-purple-400",max: addlMgmtFee,  val: mAddlMgmt,  set: setMAddlMgmt,  show: addlMgmtFee > 0 },
+    { key: "addlProc",    label: "Additional Proc Fee", color: "text-sky-600 dark:text-sky-400",     max: addlProcFee,  val: mAddlProc,  set: setMAddlProc,  show: addlProcFee > 0 },
+    { key: "mgmtFee",     label: "Management Fee",     color: "text-purple-600 dark:text-purple-400",max: remainingMgmtFee, val: mMgmtFee, set: setMMgmtFee, show: remainingMgmtFee > 0 },
+    { key: "procFee",     label: "Processing Fee",     color: "text-sky-600 dark:text-sky-400",      max: remainingProcFee, val: mProcFee, set: setMProcFee, show: remainingProcFee > 0 },
+    { key: "interest",    label: "Interest",           color: "text-amber-600 dark:text-amber-400",  max: remainingInt,     val: mInterest, set: setMInterest, show: remainingInt > 0 },
+    { key: "principal",   label: "Principal",          color: "text-green-600 dark:text-green-400",  max: loan.balanceOutstanding, val: mPrincipal, set: setMPrincipal, show: loan.balanceOutstanding > 0 },
+  ].filter((b) => b.show);
+
   return (
     <form onSubmit={handleSubmit} className="p-6 space-y-4">
       {error && (
         <p className="text-xs text-red-600 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">{error}</p>
       )}
 
-      {/* Penalty status */}
+      {/* Penalty notice */}
       {penalty > 0 ? (
         <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-3">
           <div className="flex items-center gap-2 mb-1">
             <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
             <p className="text-sm font-semibold text-red-700 dark:text-red-300">Unpaid Penalty: {formatCurrency(penalty)}</p>
           </div>
-          <p className="text-xs text-red-600 dark:text-red-400 ml-6">Penalties are settled first before interest and principal.</p>
+          {mode === "auto" && <p className="text-xs text-red-600 dark:text-red-400 ml-6">Auto mode: penalty is settled first.</p>}
         </div>
       ) : (
         <div className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-3 flex items-center gap-2">
@@ -429,112 +513,286 @@ function RecordPaymentForm({
         </div>
       )}
 
-      {/* Outstanding summary */}
-      <div className="bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded-xl p-4 space-y-2 text-xs">
-        <p className="font-semibold text-gray-700 dark:text-gray-300 mb-2">Outstanding Summary</p>
-        <div className="flex justify-between">
-          <span className="text-gray-500">Principal Outstanding</span>
-          <span className="font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(loan.balanceOutstanding)}</span>
-        </div>
-        {remainingMgmtFee > 0 && (
-          <div className="flex justify-between">
-            <span className="text-purple-500 dark:text-purple-400">Management Fee Remaining</span>
-            <span className="font-semibold text-purple-600 dark:text-purple-400">{formatCurrency(remainingMgmtFee)}</span>
-          </div>
-        )}
-        <div className="flex justify-between">
-          <span className="text-gray-500">Interest Remaining</span>
-          <span className={cn("font-semibold", remainingInt > 0 ? "text-amber-600 dark:text-amber-400" : "text-gray-400")}>
-            {formatCurrency(remainingInt)}
-          </span>
-        </div>
-        <div className="flex justify-between">
-          <span className={penalty > 0 ? "text-red-500 dark:text-red-400" : "text-gray-500"}>Unpaid Penalty</span>
-          <span className={cn("font-semibold", penalty > 0 ? "text-red-600 dark:text-red-400" : "text-gray-400")}>{formatCurrency(penalty)}</span>
-        </div>
-        {addlInterest > 0 && (
-          <div className="flex justify-between">
-            <span className="text-orange-500 dark:text-orange-400">Additional Interest</span>
-            <span className="font-semibold text-orange-600 dark:text-orange-400">{formatCurrency(addlInterest)}</span>
-          </div>
-        )}
-        {addlMgmtFee > 0 && (
-          <div className="flex justify-between">
-            <span className="text-purple-500 dark:text-purple-400">Additional Mgmt Fee</span>
-            <span className="font-semibold text-purple-600 dark:text-purple-400">{formatCurrency(addlMgmtFee)}</span>
-          </div>
-        )}
-        {addlProcFee > 0 && (
-          <div className="flex justify-between">
-            <span className="text-sky-500 dark:text-sky-400">Additional Processing Fee</span>
-            <span className="font-semibold text-sky-600 dark:text-sky-400">{formatCurrency(addlProcFee)}</span>
-          </div>
-        )}
-        <div className="border-t border-gray-200 dark:border-gray-700 pt-2 mt-2 flex justify-between">
-          <span className="font-bold text-gray-700 dark:text-gray-300">TOTAL OUTSTANDING</span>
-          <span className="font-bold text-red-600 dark:text-red-400">{formatCurrency(totalOuts)}</span>
+      {/* Allocation mode toggle */}
+      <div>
+        <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">Allocation Mode</p>
+        <div className="grid grid-cols-2 gap-2">
+          {(["auto", "manual"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={cn(
+                "py-2 rounded-xl border text-xs font-semibold transition-all",
+                mode === m
+                  ? "border-green-500 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 ring-1 ring-green-500"
+                  : "border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600"
+              )}
+            >
+              {m === "auto" ? "Auto (waterfall)" : "Manual (custom)"}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Amount */}
-      <Input
-        label={`Payment Amount (RWF) — max ${formatCurrency(totalOuts)}`}
-        type="number"
-        min="1"
-        max={totalOuts}
-        value={amount}
-        onChange={(e) => setAmount(e.target.value)}
-        required
-      />
+      {/* ── AUTO MODE ── */}
+      {mode === "auto" && (
+        <>
+          <Input
+            label={`Payment Amount (RWF) — max ${formatCurrency(totalOuts)}`}
+            type="number" min="1" max={totalOuts}
+            value={amount} onChange={(e) => setAmount(e.target.value)} required
+          />
+          {amt > 0 && (
+            <div className="bg-green-50 dark:bg-green-900/10 border border-green-100 dark:border-green-800/50 rounded-xl p-3 text-xs space-y-2">
+              <p className="font-semibold text-gray-700 dark:text-gray-300 mb-1">Auto-allocation preview</p>
+              {autoPenalty  > 0 && <div className="flex justify-between"><span className="text-gray-500">→ Penalty</span>              <span className="font-bold text-red-600 dark:text-red-400">{formatCurrency(autoPenalty)}</span></div>}
+              {autoAddlInt  > 0 && <div className="flex justify-between"><span className="text-gray-500">→ Additional Interest</span>  <span className="font-bold text-orange-600 dark:text-orange-400">{formatCurrency(autoAddlInt)}</span></div>}
+              {autoAddlMgmt > 0 && <div className="flex justify-between"><span className="text-gray-500">→ Additional Mgmt Fee</span>  <span className="font-semibold text-purple-600 dark:text-purple-400">{formatCurrency(autoAddlMgmt)}</span></div>}
+              {autoAddlProc > 0 && <div className="flex justify-between"><span className="text-gray-500">→ Additional Proc Fee</span>  <span className="font-semibold text-sky-600 dark:text-sky-400">{formatCurrency(autoAddlProc)}</span></div>}
+              {autoMgmtFee  > 0 && <div className="flex justify-between"><span className="text-gray-500">→ Management Fee</span>       <span className="font-semibold text-purple-600 dark:text-purple-400">{formatCurrency(autoMgmtFee)}</span></div>}
+              {autoProcFee  > 0 && <div className="flex justify-between"><span className="text-gray-500">→ Processing Fee</span>       <span className="font-semibold text-sky-600 dark:text-sky-400">{formatCurrency(autoProcFee)}</span></div>}
+              <div className="flex justify-between"><span className="text-gray-500">→ Interest</span>  <span className="font-semibold text-amber-600 dark:text-amber-400">{formatCurrency(autoInterest)}</span></div>
+              <div className="flex justify-between"><span className="text-gray-500">→ Principal</span> <span className="font-semibold text-green-600 dark:text-green-400">{formatCurrency(autoPrincipal)}</span></div>
+            </div>
+          )}
+        </>
+      )}
 
-      {/* Allocation preview */}
-      {amt > 0 && (
-        <div className="bg-green-50 dark:bg-green-900/10 border border-green-100 dark:border-green-800/50 rounded-xl p-3 text-xs space-y-2">
-          <p className="font-semibold text-gray-700 dark:text-gray-300 mb-1">Auto-allocation preview</p>
-          {penaltyPaid > 0 && (
-            <div className="flex justify-between">
-              <span className="text-gray-500">→ Penalty</span>
-              <span className="font-bold text-red-600 dark:text-red-400">{formatCurrency(penaltyPaid)}</span>
-            </div>
-          )}
-          {addlInterestPreview > 0 && (
-            <div className="flex justify-between">
-              <span className="text-gray-500">→ Additional Interest</span>
-              <span className="font-bold text-orange-600 dark:text-orange-400">{formatCurrency(addlInterestPreview)}</span>
-            </div>
-          )}
-          {addlMgmtFeePreview > 0 && (
-            <div className="flex justify-between">
-              <span className="text-gray-500">→ Additional Mgmt Fee</span>
-              <span className="font-semibold text-purple-600 dark:text-purple-400">{formatCurrency(addlMgmtFeePreview)}</span>
-            </div>
-          )}
-          {addlProcFeePreview > 0 && (
-            <div className="flex justify-between">
-              <span className="text-gray-500">→ Additional Processing Fee</span>
-              <span className="font-semibold text-sky-600 dark:text-sky-400">{formatCurrency(addlProcFeePreview)}</span>
-            </div>
-          )}
-          {mgmtFeePreview > 0 && (
-            <div className="flex justify-between">
-              <span className="text-gray-500">→ Management Fee</span>
-              <span className="font-semibold text-purple-600 dark:text-purple-400">{formatCurrency(mgmtFeePreview)}</span>
-            </div>
-          )}
-          {procFeePreview > 0 && (
-            <div className="flex justify-between">
-              <span className="text-gray-500">→ Processing Fee</span>
-              <span className="font-semibold text-sky-600 dark:text-sky-400">{formatCurrency(procFeePreview)}</span>
-            </div>
-          )}
-          <div className="flex justify-between">
-            <span className="text-gray-500">→ Interest</span>
-            <span className="font-semibold text-amber-600 dark:text-amber-400">{formatCurrency(interest)}</span>
+      {/* ── MANUAL MODE ── */}
+      {mode === "manual" && (
+        <div className="space-y-3">
+          <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-3 text-xs text-amber-700 dark:text-amber-300">
+            Enter how much of the payment goes to each bucket. Total must equal the payment amount. Leave zero for buckets you want to skip.
           </div>
-          <div className="flex justify-between">
-            <span className="text-gray-500">→ Principal</span>
-            <span className="font-semibold text-green-600 dark:text-green-400">{formatCurrency(principal)}</span>
+          <div className="space-y-2">
+            {manualBuckets.map((b) => (
+              <div key={b.key} className="flex items-center gap-3">
+                <div className="flex-1">
+                  <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-0.5">
+                    {b.label} <span className={cn("text-[10px]", b.color)}>max {formatCurrency(b.max)}</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max={b.max}
+                    value={b.val}
+                    onChange={(e) => b.set(e.target.value)}
+                    className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => b.set(String(b.max))}
+                  className="mt-4 text-[10px] font-semibold text-green-600 dark:text-green-400 hover:underline shrink-0"
+                >
+                  Max
+                </button>
+              </div>
+            ))}
           </div>
+          {/* Total indicator */}
+          <div className={cn(
+            "flex justify-between items-center rounded-xl px-4 py-2.5 text-sm font-bold border",
+            manualTotal === 0
+              ? "bg-gray-50 dark:bg-gray-800/40 border-gray-200 dark:border-gray-700 text-gray-400"
+              : manualBalanceOk
+              ? "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300"
+              : "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-600 dark:text-red-400"
+          )}>
+            <span>Total allocated</span>
+            <span>{formatCurrency(manualTotal)}</span>
+          </div>
+          <Input
+            label="Payment Amount (RWF)"
+            type="number" min="1"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            required
+            hint="Must equal the sum of buckets above"
+          />
+
+          {/* ── Early settlement interest waiver (manual mode only) ── */}
+          {remainingInt > 0 && (
+            <div className={cn(
+              "rounded-xl border p-3 space-y-3 transition-colors",
+              waiveInterest
+                ? "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-300 dark:border-emerald-700"
+                : "border-gray-200 dark:border-gray-700"
+            )}>
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={waiveInterest}
+                  onChange={(e) => {
+                    setWaiveInterest(e.target.checked);
+                    if (!e.target.checked) setWaivedAmountInput("");
+                  }}
+                  className="mt-0.5 w-4 h-4 accent-emerald-600"
+                />
+                <div>
+                  <p className="text-sm font-semibold text-gray-800 dark:text-gray-100">
+                    Waive unearned interest (early settlement)
+                  </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                    Interest remaining: {formatCurrency(remainingInt)}. Enter the amount you are waiving below.
+                  </p>
+                </div>
+              </label>
+              {waiveInterest && (
+                <div className="space-y-1 ml-7">
+                  {(() => {
+                    const interestBeingPaid = Number(mInterest) || 0;
+                    const maxWaivable = Math.max(0, remainingInt - interestBeingPaid);
+                    const waivedNum   = Number(waivedAmountInput) || 0;
+                    return (
+                      <>
+                        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                          Waived Interest Amount (RWF) — max {formatCurrency(maxWaivable)}
+                          {interestBeingPaid > 0 && (
+                            <span className="text-gray-400 ml-1">(remaining after {formatCurrency(interestBeingPaid)} paid)</span>
+                          )}
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          max={maxWaivable}
+                          value={waivedAmountInput}
+                          onChange={(e) => setWaivedAmountInput(e.target.value)}
+                          placeholder="Enter amount to waive"
+                          className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                        {waivedNum > 0 && waivedNum <= maxWaivable && (
+                          <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                            {formatCurrency(waivedNum)} will be written off. Borrower saves this amount.
+                          </p>
+                        )}
+                        {waivedNum > maxWaivable && (
+                          <p className="text-xs text-red-600 dark:text-red-400">
+                            Cannot exceed {formatCurrency(maxWaivable)}.
+                          </p>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Mgmt fee waiver ── */}
+          {remainingMgmtFee > 0 && (
+            <div className={cn(
+              "rounded-xl border p-3 space-y-3 transition-colors",
+              waiveMgmtFee
+                ? "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-300 dark:border-emerald-700"
+                : "border-gray-200 dark:border-gray-700"
+            )}>
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={waiveMgmtFee}
+                  onChange={(e) => { setWaiveMgmtFee(e.target.checked); if (!e.target.checked) setWaivedMgmtInput(""); }}
+                  className="mt-0.5 w-4 h-4 accent-emerald-600"
+                />
+                <div>
+                  <p className="text-sm font-semibold text-gray-800 dark:text-gray-100">
+                    Waive management fee (early settlement)
+                  </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                    Management fee remaining: {formatCurrency(remainingMgmtFee)}. Enter the amount you are waiving below.
+                  </p>
+                </div>
+              </label>
+              {waiveMgmtFee && (
+                <div className="space-y-1 ml-7">
+                  {(() => {
+                    const beingPaid   = Number(mMgmtFee) || 0;
+                    const maxWaivable = Math.max(0, remainingMgmtFee - beingPaid);
+                    const waivedNum   = Number(waivedMgmtInput) || 0;
+                    return (
+                      <>
+                        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                          Waived Management Fee (RWF) — max {formatCurrency(maxWaivable)}
+                          {beingPaid > 0 && <span className="text-gray-400 ml-1">(remaining after {formatCurrency(beingPaid)} paid)</span>}
+                        </label>
+                        <input
+                          type="number" min="1" max={maxWaivable}
+                          value={waivedMgmtInput}
+                          onChange={(e) => setWaivedMgmtInput(e.target.value)}
+                          placeholder="Enter amount to waive"
+                          className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                        {waivedNum > 0 && waivedNum <= maxWaivable && (
+                          <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">{formatCurrency(waivedNum)} management fee will be written off.</p>
+                        )}
+                        {waivedNum > maxWaivable && (
+                          <p className="text-xs text-red-600 dark:text-red-400">Cannot exceed {formatCurrency(maxWaivable)}.</p>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Processing fee waiver ── */}
+          {remainingProcFee > 0 && (
+            <div className={cn(
+              "rounded-xl border p-3 space-y-3 transition-colors",
+              waiveProcFee
+                ? "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-300 dark:border-emerald-700"
+                : "border-gray-200 dark:border-gray-700"
+            )}>
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={waiveProcFee}
+                  onChange={(e) => { setWaiveProcFee(e.target.checked); if (!e.target.checked) setWaivedProcInput(""); }}
+                  className="mt-0.5 w-4 h-4 accent-emerald-600"
+                />
+                <div>
+                  <p className="text-sm font-semibold text-gray-800 dark:text-gray-100">
+                    Waive processing fee (early settlement)
+                  </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                    Processing fee remaining: {formatCurrency(remainingProcFee)}. Enter the amount you are waiving below.
+                  </p>
+                </div>
+              </label>
+              {waiveProcFee && (
+                <div className="space-y-1 ml-7">
+                  {(() => {
+                    const beingPaid   = Number(mProcFee) || 0;
+                    const maxWaivable = Math.max(0, remainingProcFee - beingPaid);
+                    const waivedNum   = Number(waivedProcInput) || 0;
+                    return (
+                      <>
+                        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                          Waived Processing Fee (RWF) — max {formatCurrency(maxWaivable)}
+                          {beingPaid > 0 && <span className="text-gray-400 ml-1">(remaining after {formatCurrency(beingPaid)} paid)</span>}
+                        </label>
+                        <input
+                          type="number" min="1" max={maxWaivable}
+                          value={waivedProcInput}
+                          onChange={(e) => setWaivedProcInput(e.target.value)}
+                          placeholder="Enter amount to waive"
+                          className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                        {waivedNum > 0 && waivedNum <= maxWaivable && (
+                          <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">{formatCurrency(waivedNum)} processing fee will be written off.</p>
+                        )}
+                        {waivedNum > maxWaivable && (
+                          <p className="text-xs text-red-600 dark:text-red-400">Cannot exceed {formatCurrency(maxWaivable)}.</p>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -560,10 +818,9 @@ function RecordPaymentForm({
         />
         <Input
           label="Reference / Receipt #"
-          placeholder="e.g. RCP-001"
+          placeholder="e.g. RCP-001 (optional)"
           value={reference}
           onChange={(e) => setReference(e.target.value)}
-          required
         />
       </div>
 
@@ -581,11 +838,7 @@ function RecordPaymentForm({
           <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-green-200 dark:border-green-800/50 bg-green-50 dark:bg-green-900/10">
             <Receipt className="w-4 h-4 text-green-600 dark:text-green-400 shrink-0" />
             <span className="text-xs font-medium text-green-700 dark:text-green-300 flex-1 truncate">{receiptFile.name}</span>
-            <button
-              type="button"
-              onClick={() => setReceiptFile(null)}
-              className="text-gray-400 hover:text-red-500 transition-colors"
-            >
+            <button type="button" onClick={() => setReceiptFile(null)} className="text-gray-400 hover:text-red-500 transition-colors">
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -593,23 +846,15 @@ function RecordPaymentForm({
           <label className="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-dashed border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/40 cursor-pointer hover:border-green-400 dark:hover:border-green-600 hover:bg-green-50 dark:hover:bg-green-900/10 transition-all">
             <Upload className="w-4 h-4 text-gray-400 shrink-0" />
             <span className="text-xs text-gray-500 dark:text-gray-400">Click to upload receipt (JPG, PNG, PDF — max 5 MB)</span>
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp,application/pdf"
-              className="hidden"
-              onChange={(e) => setReceiptFile(e.target.files?.[0] ?? null)}
-            />
+            <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" className="hidden"
+              onChange={(e) => setReceiptFile(e.target.files?.[0] ?? null)} />
           </label>
         )}
       </div>
 
       <div className="flex justify-end gap-3">
         <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-        <Button
-          type="submit"
-          loading={uploading || loading}
-          icon={<Banknote className="w-4 h-4" />}
-        >
+        <Button type="submit" loading={uploading || loading} icon={<Banknote className="w-4 h-4" />}>
           {uploading ? "Uploading receipt…" : "Record Payment"}
         </Button>
       </div>
@@ -1035,7 +1280,7 @@ function TopUpForm({
 }: {
   loan: Loan;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (newLoanId?: string) => void;
 }) {
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
@@ -1048,6 +1293,10 @@ function TopUpForm({
   );
   const [firstPaymentDate, setFirstPaymentDate] = useState(defaultDate);
   const [newRate,           setNewRate]          = useState(String(loan.annualInterestRate / 12));
+  const [feeType,           setFeeType]          = useState<"none" | "per_installment" | "one_time">("none");
+  const [feeRate,           setFeeRate]          = useState("");
+  const [feeAmount,         setFeeAmount]        = useState("");
+  const [feeLabel,          setFeeLabel]         = useState("");
   const [loading,           setLoading]          = useState(false);
   const [error,             setError]            = useState("");
 
@@ -1103,20 +1352,26 @@ function TopUpForm({
     if (!firstPaymentDate) { setError("First payment date is required."); return; }
     setLoading(true);
     try {
+      const body: Record<string, unknown> = {
+        topUpType,
+        topUpAmount:           topUp,
+        newTotalInstallments:  n,
+        newFirstPaymentDate:   firstPaymentDate,
+        newAnnualInterestRate: Number(newRate) * 12,
+        feeType,
+      };
+      if (feeType === "per_installment" && feeRate)   body.feeRate   = Number(feeRate) * 12;
+      if (feeType === "one_time"         && feeAmount) body.feeAmount = Math.round(newPrincipal * Number(feeAmount) / 100);
+      if (feeLabel) body.feeLabel = feeLabel;
+
       const res = await apiFetch(`/api/v1/loans/${loan.id}/topup`, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          topUpType,
-          topUpAmount:           topUp,
-          newTotalInstallments:  n,
-          newFirstPaymentDate:   firstPaymentDate,
-          newAnnualInterestRate: Number(newRate) * 12,
-        }),
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
       });
       const json = await res.json();
       if (!res.ok) { setError(json.error || "Top-up failed."); return; }
-      onSaved();
+      // Refinance returns the new loan — navigate to it
+      onSaved(json.data?.refinancedLoanId ? json.data?.id : undefined);
     } catch {
       setError("Network error.");
     } finally {
@@ -1270,7 +1525,7 @@ function TopUpForm({
         label={`Monthly Interest Rate (%) — current: ${loan.annualInterestRate / 12}%`}
         type="number"
         min="0.01"
-        step="0.1"
+        step="any"
         value={newRate}
         onChange={(e) => setNewRate(e.target.value)}
         required
@@ -1307,6 +1562,73 @@ function TopUpForm({
         </div>
       )}
 
+      {/* ── Top-up fee ── */}
+      <div className="space-y-3 pt-1">
+        <p className="text-xs font-semibold text-gray-700 dark:text-gray-300">Top-up Fee (optional)</p>
+        <div className="grid grid-cols-3 gap-2">
+          {(["none", "per_installment", "one_time"] as const).map((ft) => (
+            <button
+              key={ft}
+              type="button"
+              onClick={() => { setFeeType(ft); setFeeRate(""); setFeeAmount(""); }}
+              className={cn(
+                "py-2 px-3 rounded-xl border text-xs font-medium transition-all",
+                feeType === ft
+                  ? "border-green-500 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 ring-1 ring-green-500"
+                  : "border-gray-200 dark:border-gray-700 text-gray-500 hover:border-gray-300"
+              )}
+            >
+              {ft === "none" ? "No Fee" : ft === "per_installment" ? "Per Installment (%)" : "One-time (Fixed)"}
+            </button>
+          ))}
+        </div>
+
+        {feeType !== "none" && (
+          <div className="space-y-3 p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40">
+            <Input
+              label="Fee Label (optional)"
+              placeholder={feeType === "per_installment" ? "e.g. Processing fee" : "e.g. Restructuring fee"}
+              value={feeLabel}
+              onChange={(e) => setFeeLabel(e.target.value)}
+            />
+            {feeType === "per_installment" && (
+              <Input
+                label="Monthly Fee Rate (%)"
+                type="number" min="0" step="any"
+                placeholder="e.g. 0.5"
+                value={feeRate}
+                onChange={(e) => setFeeRate(e.target.value)}
+                hint="Charged on outstanding principal each installment, like interest"
+              />
+            )}
+            {feeType === "one_time" && (
+              <>
+                <Input
+                  label="One-time Fee Rate (% of loan principal)"
+                  type="number" min="0.01" step="any"
+                  placeholder="e.g. 2.5"
+                  value={feeAmount}
+                  onChange={(e) => setFeeAmount(e.target.value)}
+                  hint="Fee = rate × principal, divided equally across all installments"
+                />
+                {Number(feeAmount) > 0 && topUp > 0 && Number(newInstallments) > 0 && (
+                  <div className="text-xs text-gray-500 dark:text-gray-400 space-y-0.5">
+                    <p>Total fee: <span className="font-semibold text-gray-700 dark:text-gray-300">{formatCurrency(Math.round(newPrincipal * Number(feeAmount) / 100))}</span></p>
+                    <p>Per installment: <span className="font-semibold text-gray-700 dark:text-gray-300">{formatCurrency(Math.ceil(newPrincipal * Number(feeAmount) / 100 / Number(newInstallments)))}</span></p>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {topUpType === "refinance" && (
+        <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-3 text-xs text-amber-700 dark:text-amber-300">
+          <strong>Refinance note:</strong> The existing loan will be closed and marked complete. A brand-new loan will be created with the refinance amount. You will be redirected to the new loan.
+        </div>
+      )}
+
       <div className="flex justify-end gap-3 pt-1">
         <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
         <Button
@@ -1316,6 +1638,330 @@ function TopUpForm({
         >
           Confirm {topUpType === "addon" ? "Add-on" : "Refinance"} Top-Up
         </Button>
+      </div>
+    </form>
+  );
+}
+
+// ── Restructure Form ──────────────────────────────────────────────────────────
+function RestructureForm({ loan, onClose, onSaved }: {
+  loan: Loan & { customer?: any };
+  onClose: () => void;
+  onSaved: (newLoanId: string) => void;
+}) {
+  const totalMgmtFeeScheduled = loan.totalMgmtFeeScheduled ?? 0;
+  const totalProcFeeScheduled = loan.totalProcessingFeeScheduled ?? 0;
+  const totalInterestScheduled = (loan.totalInterestScheduled ?? 0) > 0
+    ? loan.totalInterestScheduled!
+    : loan.totalRepayable - loan.amount - totalMgmtFeeScheduled - totalProcFeeScheduled;
+  const remInterest = Math.max(0, totalInterestScheduled - loan.amountRepaidInterest);
+  const remMgmt     = Math.max(0, totalMgmtFeeScheduled  - (loan.amountRepaidMgmtFee ?? 0));
+  const remProc     = Math.max(0, totalProcFeeScheduled   - (loan.amountRepaidProcessingFee ?? 0));
+  const addlInt     = loan.additionalInterest ?? 0;
+  const addlMgmt    = loan.additionalMgmtFee ?? 0;
+  const addlProc    = loan.additionalProcessingFee ?? 0;
+  const defaultPrincipal = Math.round(
+    loan.balanceOutstanding + remInterest + addlInt + remMgmt + addlMgmt + remProc + addlProc + loan.penaltyAmount
+  );
+
+  const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1);
+
+  const [newInstallments, setNewInstallments] = useState(String(loan.totalInstallments));
+  const [rate,            setRate]            = useState(String(loan.annualInterestRate / 12));
+  const [firstDate,       setFirstDate]       = useState(tomorrow.toISOString().slice(0, 10));
+  const [mgmtRate,        setMgmtRate]        = useState(String(Number(loan.managementFeeRate ?? 0) * (360 / loan.repaymentFrequencyDays) / 100));
+  const [procRate,        setProcRate]        = useState(String(Number((loan as any).processingFeeRate ?? 0) * (360 / loan.repaymentFrequencyDays) / 100));
+  const [overridePrincipal, setOverridePrincipal] = useState(String(defaultPrincipal));
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState("");
+
+  const n          = Math.max(1, Number(newInstallments) || 1);
+  const annualRate = Number(rate)     * 12;
+  const principal  = Math.max(1, Number(overridePrincipal) || defaultPrincipal);
+
+  const periodsPerYear   = 360 / loan.repaymentFrequencyDays;
+  const r = annualRate / 100 / periodsPerYear;
+  const m = Number(mgmtRate) / 100 / 12 * (loan.repaymentFrequencyDays / 30);
+  const p = Number(procRate) / 100 / 12 * (loan.repaymentFrequencyDays / 30);
+  const combined = r + m + p;
+  let previewEmi = 0;
+  if (loan.interestMethod === "flat") {
+    previewEmi = Math.round((principal + principal * r * n + principal * m * n + principal * p * n) / n);
+  } else {
+    previewEmi = combined === 0 ? Math.round(principal / n)
+      : Math.round((principal * combined * Math.pow(1 + combined, n)) / (Math.pow(1 + combined, n) - 1));
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      const res = await apiFetch(`/api/v1/loans/${loan.id}/restructure`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          newAnnualInterestRate: annualRate,
+          newTotalInstallments:  n,
+          newFirstPaymentDate:   firstDate,
+          newMgmtFeeRate:        Number(mgmtRate) * 12,
+          newProcFeeRate:        Number(procRate) * 12,
+          newPrincipalOverride:  principal,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) { setError(json.error || "Restructuring failed."); return; }
+      onSaved(json.data?.id);
+    } catch {
+      setError("Network error.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="p-6 space-y-4">
+      {error && (
+        <p className="text-xs text-red-600 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">{error}</p>
+      )}
+
+      {/* Combined principal breakdown */}
+      <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-4 space-y-2 text-xs">
+        <p className="font-semibold text-amber-800 dark:text-amber-300 mb-1">Outstanding Combined into New Principal</p>
+        <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Principal Outstanding</span><span className="font-medium">{formatCurrency(loan.balanceOutstanding)}</span></div>
+        {remInterest + addlInt > 0 && <div className="flex justify-between"><span className="text-amber-600 dark:text-amber-400">Interest Remaining</span><span className="font-medium text-amber-700 dark:text-amber-300">{formatCurrency(remInterest + addlInt)}</span></div>}
+        {remMgmt + addlMgmt > 0 && <div className="flex justify-between"><span className="text-purple-600 dark:text-purple-400">Mgmt Fee Remaining</span><span className="font-medium text-purple-700 dark:text-purple-300">{formatCurrency(remMgmt + addlMgmt)}</span></div>}
+        {remProc + addlProc > 0 && <div className="flex justify-between"><span className="text-sky-600 dark:text-sky-400">Processing Fee Remaining</span><span className="font-medium text-sky-700 dark:text-sky-300">{formatCurrency(remProc + addlProc)}</span></div>}
+        {loan.penaltyAmount > 0 && <div className="flex justify-between"><span className="text-red-600 dark:text-red-400">Outstanding Penalty</span><span className="font-medium text-red-700 dark:text-red-300">{formatCurrency(loan.penaltyAmount)}</span></div>}
+        <div className="border-t border-amber-200 dark:border-amber-700 pt-2 flex justify-between">
+          <span className="font-bold text-amber-800 dark:text-amber-200">Default New Principal</span>
+          <span className="font-bold text-amber-800 dark:text-amber-200">{formatCurrency(defaultPrincipal)}</span>
+        </div>
+      </div>
+
+      <Input
+        label="New Principal (RWF) — adjust if needed"
+        type="number" min="1" step="1"
+        value={overridePrincipal}
+        onChange={(e) => setOverridePrincipal(e.target.value)}
+        required
+      />
+
+      <div className="grid grid-cols-2 gap-4">
+        <Input label="Monthly Interest Rate (%)" type="number" min="0.01" step="any"
+          value={rate} onChange={(e) => setRate(e.target.value)} required />
+        <Input label="Total Installments" type="number" min="1"
+          value={newInstallments} onChange={(e) => setNewInstallments(e.target.value)} required />
+      </div>
+
+      <Input label="First Payment Date" type="date"
+        value={firstDate} onChange={(e) => setFirstDate(e.target.value)} required />
+
+      <div className="grid grid-cols-2 gap-4">
+        <Input label="Monthly Mgmt Fee Rate (%)" type="number" min="0" step="any"
+          value={mgmtRate} onChange={(e) => setMgmtRate(e.target.value)} />
+        <Input label="Monthly Proc Fee Rate (%)" type="number" min="0" step="any"
+          value={procRate} onChange={(e) => setProcRate(e.target.value)} />
+      </div>
+
+      {previewEmi > 0 && (
+        <div className="bg-green-50 dark:bg-green-900/10 border border-green-100 dark:border-green-800/50 rounded-xl p-3 text-xs space-y-1.5">
+          <p className="font-semibold text-gray-700 dark:text-gray-300">New Loan Preview</p>
+          <div className="flex justify-between"><span className="text-gray-500">New Principal</span><span className="font-semibold">{formatCurrency(principal)}</span></div>
+          <div className="flex justify-between"><span className="text-gray-500">Installments</span><span className="font-semibold">{n}</span></div>
+          <div className="flex justify-between"><span className="text-gray-500">Est. Installment Amount</span><span className="font-bold text-green-700 dark:text-green-400 text-sm">{formatCurrency(previewEmi)}</span></div>
+        </div>
+      )}
+
+      <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl p-3 text-xs text-blue-700 dark:text-blue-300">
+        The current overdue loan will be <strong>closed</strong>. A brand-new loan with the combined principal will be created and you will be redirected to it.
+      </div>
+
+      <div className="flex justify-end gap-3">
+        <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+        <Button type="submit" loading={loading} icon={<ArrowDownUp className="w-4 h-4" />}>
+          Confirm Restructure
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+// ── Edit Loan Form (super_admin only) ────────────────────────────────────────
+function EditLoanForm({ loan, onClose, onSaved }: { loan: Loan & { customer?: any }; onClose: () => void; onSaved: () => void }) {
+  const [purpose,     setPurpose]     = useState(loan.purpose);
+  const [amount,      setAmount]      = useState(String(loan.amount));
+  const [rate,        setRate]        = useState(String(loan.annualInterestRate / 12));
+  const [method,      setMethod]      = useState<"flat" | "declining">(loan.interestMethod as any);
+  const [installments,setInstallments]= useState(String(loan.totalInstallments));
+  const [freqDays,    setFreqDays]    = useState(String(loan.repaymentFrequencyDays));
+  const [grace,       setGrace]       = useState(String(loan.gracePeriodDays ?? 0));
+  const [branch,      setBranch]      = useState(loan.branchName ?? "");
+  const [mgmtRate,    setMgmtRate]    = useState(String(Number(loan.managementFeeRate) / (360 / loan.repaymentFrequencyDays) * 100 / 100));
+  const [procRate,    setProcRate]    = useState(String(Number((loan as any).processingFeeRate ?? 0) / (360 / loan.repaymentFrequencyDays) * 100 / 100));
+  const [penaltyRate, setPenaltyRate] = useState(String(Number((loan as any).penaltyRatePerDay ?? 0)));
+  const [loading,     setLoading]     = useState(false);
+  const [error,       setError]       = useState("");
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    const annualRate    = Number(rate)    * 12;
+    const annualMgmt    = Number(mgmtRate) * (360 / Number(freqDays));
+    const annualProc    = Number(procRate) * (360 / Number(freqDays));
+    setLoading(true);
+    try {
+      const res = await apiFetch(`/api/v1/loans/${loan.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          purpose,
+          amount:                 Number(amount),
+          annualInterestRate:     annualRate,
+          interestMethod:         method,
+          totalInstallments:      Number(installments),
+          repaymentFrequencyDays: Number(freqDays),
+          gracePeriodDays:        Number(grace),
+          branchName:             branch || null,
+          managementFeeRate:      annualMgmt,
+          processingFeeRate:      annualProc,
+          penaltyRatePerDay:      Number(penaltyRate),
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) { setError(json.error || "Failed to update loan."); return; }
+      onSaved();
+    } catch {
+      setError("Network error.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const freqOptions = [
+    { value: "1",  label: "Daily" },
+    { value: "7",  label: "Weekly" },
+    { value: "14", label: "Bi-Weekly" },
+    { value: "30", label: "Monthly" },
+    { value: "90", label: "Quarterly" },
+  ];
+
+  return (
+    <form onSubmit={handleSubmit} className="p-6 space-y-4">
+      {error && (
+        <p className="text-xs text-red-600 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">{error}</p>
+      )}
+      <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-3 text-xs text-amber-700 dark:text-amber-300">
+        Super admin edit — changes apply immediately to all loan fields.
+      </div>
+
+      <Input label="Purpose" value={purpose} onChange={(e) => setPurpose(e.target.value)} required />
+
+      <div className="grid grid-cols-2 gap-4">
+        <Input label="Loan Amount (RWF)" type="number" min="1" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+        <Input label="Branch" value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="Optional" />
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <Input label="Monthly Interest Rate (%)" type="number" min="0" step="0.01" value={rate} onChange={(e) => setRate(e.target.value)} required />
+        <Select
+          label="Interest Method"
+          options={[{ value: "flat", label: "Flat" }, { value: "declining", label: "Declining Balance" }]}
+          value={method}
+          onChange={(e) => setMethod(e.target.value as any)}
+        />
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <Input label="Total Installments" type="number" min="1" value={installments} onChange={(e) => setInstallments(e.target.value)} required />
+        <Select
+          label="Repayment Frequency"
+          options={freqOptions}
+          value={freqDays}
+          onChange={(e) => setFreqDays(e.target.value)}
+        />
+      </div>
+
+      <div className="grid grid-cols-3 gap-4">
+        <Input label="Grace Period (days)" type="number" min="0" value={grace} onChange={(e) => setGrace(e.target.value)} />
+        <Input label="Mgmt Fee Rate (%/period)" type="number" min="0" step="0.01" value={mgmtRate} onChange={(e) => setMgmtRate(e.target.value)} />
+        <Input label="Proc Fee Rate (%/period)" type="number" min="0" step="0.01" value={procRate} onChange={(e) => setProcRate(e.target.value)} />
+      </div>
+
+      <Input label="Penalty Rate (%/day overdue)" type="number" min="0" step="0.001" value={penaltyRate} onChange={(e) => setPenaltyRate(e.target.value)} />
+
+      <div className="flex justify-end gap-3 pt-1">
+        <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+        <Button type="submit" loading={loading}>Save Changes</Button>
+      </div>
+    </form>
+  );
+}
+
+// ── Edit Payment Form (super_admin only) ─────────────────────────────────────
+function EditPaymentForm({ payment, onClose, onSaved }: { payment: Payment & { recordedByName?: string }; onClose: () => void; onSaved: () => void }) {
+  const [reference, setReference] = useState(payment.reference);
+  const [notes,     setNotes]     = useState(payment.notes ?? "");
+  const [method,    setMethod]    = useState(payment.method);
+  const [date,      setDate]      = useState(new Date(payment.date).toISOString().slice(0, 10));
+  const [loading,   setLoading]   = useState(false);
+  const [error,     setError]     = useState("");
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      const res = await apiFetch(`/api/v1/payments/${payment.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reference, notes: notes || null, method, date }),
+      });
+      const json = await res.json();
+      if (!res.ok) { setError(json.error || "Failed to update payment."); return; }
+      onSaved();
+    } catch {
+      setError("Network error.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="p-6 space-y-4">
+      {error && (
+        <p className="text-xs text-red-600 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">{error}</p>
+      )}
+      <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-3 text-xs text-amber-700 dark:text-amber-300">
+        Editing payment metadata only — amount and allocation cannot be changed here.
+      </div>
+
+      <Input label="Payment Date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+      <Select
+        label="Payment Method"
+        options={[
+          { value: "cash",          label: "Cash" },
+          { value: "bank_transfer", label: "Bank Transfer" },
+          { value: "mobile_money",  label: "Mobile Money" },
+        ]}
+        value={method}
+        onChange={(e) => setMethod(e.target.value as any)}
+      />
+      <Input label="Reference / Receipt #" value={reference} onChange={(e) => setReference(e.target.value)} required />
+      <div>
+        <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Notes</label>
+        <textarea
+          className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
+          rows={3}
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder="Optional notes..."
+        />
+      </div>
+
+      <div className="flex justify-end gap-3 pt-1">
+        <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+        <Button type="submit" loading={loading}>Save Changes</Button>
       </div>
     </form>
   );
@@ -1331,6 +1977,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
   const canDisburse      = ["managing_director", "loan_officer", "super_admin"].includes(role);
   const canRecordPayment = ["managing_director", "loan_officer", "super_admin"].includes(role);
   const canDelete        = ["managing_director", "loan_officer", "super_admin"].includes(role);
+  const canEditLoan      = role === "super_admin";
 
   const [loan, setLoan]                 = useState<(Loan & { customer?: any; loanOfficer?: any; approvedBy?: any }) | null>(null);
   const [installments, setInstallments] = useState<Installment[]>([]);
@@ -1356,6 +2003,9 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
   const [showDeleteModal,   setShowDeleteModal]   = useState(false);
   const [deleting,          setDeleting]          = useState(false);
   const [deleteError,       setDeleteError]       = useState("");
+  const [showEditLoanModal,    setShowEditLoanModal]    = useState(false);
+  const [editingPayment,       setEditingPayment]       = useState<(Payment & { recordedByName?: string }) | null>(null);
+  const [showRestructureModal, setShowRestructureModal] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -1522,6 +2172,20 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
             />
           )}
 
+          {/* ── Restructure ── */}
+          {["active", "overdue", "approved", "disbursed"].includes(loan.status) && canDisburse && (
+            <Button variant="outline" size="sm" icon={<ArrowDownUp className="w-4 h-4" />} onClick={() => setShowRestructureModal(true)}>
+              Restructure
+            </Button>
+          )}
+
+          {/* ── Edit Loan (super_admin) ── */}
+          {canEditLoan && (
+            <Button variant="outline" size="sm" onClick={() => setShowEditLoanModal(true)}>
+              Edit Loan
+            </Button>
+          )}
+
           {/* ── Utility ── */}
           <Button variant="outline" size="sm" icon={<FileText className="w-4 h-4" />} onClick={() => setShowContractModal(true)}>
             Agreement
@@ -1541,8 +2205,9 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
           { label: "Total Repayable",   value: formatCurrency(loan.totalRepayable),        color: "text-blue-600 dark:text-blue-400",         border: "border-l-blue-500" },
           { label: "Total Paid",        value: formatCurrency(totalPaid),                  color: "text-emerald-600 dark:text-emerald-400",   border: "border-l-emerald-500" },
           { label: "Total Outstanding", value: formatCurrency(totalOuts),                  color: totalOuts > 0 ? "text-red-600 dark:text-red-400" : "text-gray-400", border: totalOuts > 0 ? "border-l-red-500" : "border-l-gray-200" },
-          { label: "Principal Repaid",  value: formatCurrency(loan.amountRepaidPrincipal), color: "text-green-600 dark:text-green-400",       border: "border-l-green-500" },
-          { label: "Interest Paid",     value: formatCurrency(loan.amountRepaidInterest),  color: "text-amber-600 dark:text-amber-400",       border: "border-l-amber-500" },
+          { label: "Principal Repaid",    value: formatCurrency(loan.amountRepaidPrincipal), color: "text-green-600 dark:text-green-400",       border: "border-l-green-500" },
+          { label: "Principal Remaining", value: formatCurrency(loan.balanceOutstanding),   color: loan.balanceOutstanding > 0 ? "text-red-600 dark:text-red-400" : "text-gray-400", border: loan.balanceOutstanding > 0 ? "border-l-red-500" : "border-l-gray-200" },
+          { label: "Interest Paid",       value: formatCurrency(loan.amountRepaidInterest), color: "text-amber-600 dark:text-amber-400",       border: "border-l-amber-500" },
           { label: "Interest Remaining",value: formatCurrency(intRemaining),               color: intRemaining > 0 ? "text-amber-700 dark:text-amber-300" : "text-gray-400", border: intRemaining > 0 ? "border-l-amber-400" : "border-l-gray-200" },
           ...(loan.managementFeeRate > 0 ? [
             {
@@ -1582,8 +2247,8 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
         ))}
       </div>
 
-      {/* ── Outstanding Summary (active/overdue) ──────────────────────── */}
-      {["active", "overdue"].includes(loan.status) && (
+      {/* ── Outstanding Summary (active/overdue/completed) ───────────── */}
+      {["active", "overdue", "completed"].includes(loan.status) && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* Progress */}
           <Card>
@@ -1733,6 +2398,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                     { label: "Customer",       value: loan.customer?.names ?? loan.customerName },
                     { label: "Loan Officer",   value: loan.loanOfficer?.name ?? "—" },
                     { label: "Purpose",        value: loan.purpose },
+                    ...((loan as any).economicSector ? [{ label: "Economic Sector", value: (loan as any).economicSector }] : []),
                     { label: "Interest Rate",     value: `${loan.annualInterestRate / 12}%/month (${loan.interestMethod})` },
                     ...(loan.managementFeeRate > 0 ? [{ label: "Mgmt Fee Rate", value: `${loan.managementFeeRate / 12}%/month (per installment)` }] : []),
                     ...((loan.processingFeeRate ?? 0) > 0 ? [{ label: "Proc Fee Rate", value: `${(loan.processingFeeRate ?? 0) / 12}%/month (per installment)` }] : []),
@@ -1858,54 +2524,208 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle>Payment Schedule — {loan.totalInstallments} installments</CardTitle>
-                <button
-                  onClick={() => {
-                    const rows = installments.map((r, i) => `
-                      <tr style="background:${i % 2 === 0 ? "#ffffff" : "#f9fafb"}">
-                        <td style="padding:7px 12px;border-bottom:1px solid #e5e7eb">${r.installmentNo}</td>
-                        <td style="padding:7px 12px;border-bottom:1px solid #e5e7eb">${new Date(r.dueDate).toLocaleDateString()}</td>
-                        <td style="padding:7px 12px;border-bottom:1px solid #e5e7eb;color:#16a34a">RWF ${r.principalDue.toLocaleString()}</td>
-                        <td style="padding:7px 12px;border-bottom:1px solid #e5e7eb;color:#d97706">RWF ${r.interestDue.toLocaleString()}</td>
-                        <td style="padding:7px 12px;border-bottom:1px solid #e5e7eb;font-weight:600">RWF ${r.totalDue.toLocaleString()}</td>
-                        <td style="padding:7px 12px;border-bottom:1px solid #e5e7eb">${r.amountPaid > 0 ? "RWF " + r.amountPaid.toLocaleString() : "—"}</td>
-                        <td style="padding:7px 12px;border-bottom:1px solid #e5e7eb;text-transform:capitalize">${r.status}</td>
-                      </tr>`).join("");
-                    const totalDue  = installments.reduce((s, r) => s + r.totalDue, 0);
-                    const totalPrincipal = installments.reduce((s, r) => s + r.principalDue, 0);
-                    const totalInterest  = installments.reduce((s, r) => s + r.interestDue, 0);
-                    const w = window.open("", "_blank", "width=900,height=700");
-                    if (!w) return;
-                    w.document.write(`<!DOCTYPE html><html><head><title>Payment Schedule</title>
-                      <style>body{font-family:Arial,sans-serif;font-size:12px;color:#111;margin:24px}
-                      table{width:100%;border-collapse:collapse}
-                      th{background:#052e16;color:#fff;text-align:left;padding:9px 12px;font-size:11px}
-                      tfoot td{background:#f0fdf4;font-weight:700;padding:9px 12px;border-top:2px solid #16a34a}
-                      h2{margin:0 0 4px}p{margin:0 0 16px;color:#555;font-size:11px}
-                      @media print{button{display:none}}</style></head>
-                      <body>
-                        <h2>Payment Schedule</h2>
-                        <p>Loan: ${loan.id.toUpperCase()} &nbsp;·&nbsp; Customer: ${loan.customer?.names ?? ""} &nbsp;·&nbsp; ${loan.totalInstallments} installments</p>
-                        <table>
-                          <thead><tr>
-                            <th>#</th><th>Due Date</th><th>Principal</th><th>Interest</th><th>Total Due</th><th>Amount Paid</th><th>Status</th>
-                          </tr></thead>
-                          <tbody>${rows}</tbody>
-                          <tfoot><tr>
-                            <td colspan="2">TOTALS</td>
-                            <td>RWF ${totalPrincipal.toLocaleString()}</td>
-                            <td>RWF ${totalInterest.toLocaleString()}</td>
-                            <td>RWF ${totalDue.toLocaleString()}</td>
-                            <td colspan="2"></td>
-                          </tr></tfoot>
-                        </table>
-                        <script>window.onload=()=>window.print();</script>
-                      </body></html>`);
-                    w.document.close();
-                  }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-xs font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-                >
-                  <Printer className="w-3.5 h-3.5" /> Print Schedule
-                </button>
+                <div className="flex items-center gap-2">
+                  {/* Download PDF */}
+                  <button
+                    onClick={() => {
+                      const hasMgmt = loan.managementFeeRate > 0;
+                      const hasProc = (loan.processingFeeRate ?? 0) > 0;
+                      const fmtRWF  = (n: number) => "RWF " + n.toLocaleString();
+                      const statusColor: Record<string, string> = {
+                        paid: "background:#dcfce7;color:#166534",
+                        partial: "background:#dbeafe;color:#1e40af",
+                        overdue: "background:#fee2e2;color:#991b1b",
+                        pending: "background:#f3f4f6;color:#374151",
+                      };
+                      const extraCols = [
+                        hasMgmt ? `<th style="padding:8px 10px">Mgmt Fee</th>` : "",
+                        hasProc ? `<th style="padding:8px 10px">Proc Fee</th>` : "",
+                      ].join("");
+                      const rows = installments.map((r, i) => {
+                        const sc = statusColor[r.status] ?? statusColor.pending;
+                        return `<tr style="background:${i % 2 === 0 ? "#fff" : "#f9fafb"}">
+                          <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;text-align:center">${r.installmentNo}</td>
+                          <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb">${new Date(r.dueDate).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"})}</td>
+                          <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;color:#166534;font-weight:500">${fmtRWF(r.principalDue)}</td>
+                          ${hasMgmt ? `<td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;color:#7e22ce">${fmtRWF(r.managementFeeDue)}</td>` : ""}
+                          ${hasProc ? `<td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;color:#0369a1">${fmtRWF(r.processingFeeDue ?? 0)}</td>` : ""}
+                          <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;color:#b45309">${fmtRWF(r.interestDue)}</td>
+                          <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;font-weight:700">${fmtRWF(r.totalDue)}</td>
+                          <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;color:#555">${r.amountPaid > 0 ? fmtRWF(r.amountPaid) : "—"}</td>
+                          <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb"><span style="padding:2px 8px;border-radius:12px;font-size:10px;font-weight:700;text-transform:capitalize;${sc}">${r.status}</span></td>
+                        </tr>`;
+                      }).join("");
+                      const totPrincipal = installments.reduce((s, r) => s + r.principalDue, 0);
+                      const totMgmt      = installments.reduce((s, r) => s + r.managementFeeDue, 0);
+                      const totProc      = installments.reduce((s, r) => s + (r.processingFeeDue ?? 0), 0);
+                      const totInterest  = installments.reduce((s, r) => s + r.interestDue, 0);
+                      const totDue       = installments.reduce((s, r) => s + r.totalDue, 0);
+                      const totPaid      = installments.reduce((s, r) => s + r.amountPaid, 0);
+                      const paidCount    = installments.filter((r) => r.status === "paid").length;
+                      const today        = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+                      const scheduleId   = `SCH-${loan.id.toUpperCase()}`;
+
+                      const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>${scheduleId}</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#1a1a1a;background:#fff}
+  .page{max-width:900px;margin:0 auto;padding:36px}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px;padding-bottom:20px;border-bottom:3px solid #166534}
+  .co-name{font-size:20px;font-weight:700;color:#166534}.co-sub{font-size:11px;color:#888;margin-top:2px}
+  .title h1{font-size:22px;font-weight:800;color:#166534;text-align:right}.title p{font-size:10px;color:#666;text-align:right;line-height:1.6}
+  .meta{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:22px}
+  .box{background:#f8fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px}
+  .box h3{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#9ca3af;margin-bottom:6px}
+  .box p{font-size:11px;line-height:1.7;color:#374151}.box strong{color:#111}
+  table{width:100%;border-collapse:collapse;margin-top:4px}
+  thead th{background:#052e16;color:#fff;text-align:left;padding:8px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px}
+  tfoot td{background:#f0fdf4;font-weight:700;padding:8px 10px;border-top:2px solid #16a34a;font-size:11px;color:#166534}
+  .toolbar{position:fixed;top:14px;right:14px;display:flex;gap:8px}
+  .btn-dl{background:#166534;color:#fff;border:none;padding:7px 16px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer}
+  .btn-pr{background:#fff;color:#166534;border:2px solid #166534;padding:7px 16px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer}
+  .progress-bar{height:6px;background:#e5e7eb;border-radius:4px;overflow:hidden;margin-top:8px}
+  .progress-fill{height:100%;background:#166534;border-radius:4px}
+  @media print{.toolbar{display:none}.page{padding:20px}}
+</style></head>
+<body>
+<div class="toolbar">
+  <button class="btn-pr" onclick="window.print()">🖨 Print</button>
+  <button class="btn-dl" id="dlBtn" onclick="downloadPDF()">⬇ Download PDF</button>
+</div>
+<div class="page" id="content">
+  <div class="header">
+    <div><div class="co-name">${companyName}</div><div class="co-sub">NDFSP</div></div>
+    <div class="title"><h1>REPAYMENT SCHEDULE</h1><p>Ref: <strong>${scheduleId}</strong><br/>Generated: ${today}</p></div>
+  </div>
+  <div class="meta">
+    <div class="box"><h3>Loan Details</h3>
+      <p><strong>Loan ID:</strong> ${loan.id.toUpperCase()}<br/>
+      <strong>Amount:</strong> ${fmtRWF(loan.disbursedAmount || loan.amount)}<br/>
+      <strong>Method:</strong> ${loan.interestMethod}<br/>
+      <strong>Purpose:</strong> ${loan.purpose}</p></div>
+    <div class="box"><h3>Customer</h3>
+      <p><strong>Name:</strong> ${loan.customer?.names ?? "—"}<br/>
+      <strong>ID:</strong> ${loan.customer?.nationalId ?? "—"}<br/>
+      <strong>Phone:</strong> ${loan.customer?.phone ?? "—"}</p></div>
+    <div class="box"><h3>Progress</h3>
+      <p><strong>${paidCount} of ${loan.totalInstallments}</strong> installments paid<br/>
+      <strong>${fmtRWF(totPaid)}</strong> collected so far</p>
+      <div class="progress-bar"><div class="progress-fill" style="width:${loan.totalInstallments > 0 ? Math.round(paidCount/loan.totalInstallments*100) : 0}%"></div></div></div>
+  </div>
+  <table>
+    <thead><tr>
+      <th style="text-align:center;width:36px">#</th>
+      <th>Due Date</th>
+      <th>Principal</th>
+      ${extraCols}
+      <th>Interest</th>
+      <th>Total Due</th>
+      <th>Amount Paid</th>
+      <th>Status</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+    <tfoot><tr>
+      <td colspan="2">TOTALS</td>
+      <td>${fmtRWF(totPrincipal)}</td>
+      ${hasMgmt ? `<td>${fmtRWF(totMgmt)}</td>` : ""}
+      ${hasProc ? `<td>${fmtRWF(totProc)}</td>` : ""}
+      <td>${fmtRWF(totInterest)}</td>
+      <td>${fmtRWF(totDue)}</td>
+      <td>${fmtRWF(totPaid)}</td>
+      <td></td>
+    </tr></tfoot>
+  </table>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script>
+  function downloadPDF(){
+    var btn=document.getElementById('dlBtn');
+    btn.disabled=true;btn.textContent='Generating…';
+    html2pdf().set({
+      margin:[8,8,8,8],filename:'${scheduleId}.pdf',
+      image:{type:'jpeg',quality:0.98},
+      html2canvas:{scale:2,useCORS:true,logging:false},
+      jsPDF:{unit:'mm',format:'a4',orientation:'landscape'}
+    }).from(document.getElementById('content')).save().then(function(){
+      btn.disabled=false;btn.textContent='⬇ Download PDF';
+    });
+  }
+  window.onload=()=>window.print();
+</script>
+</body></html>`;
+                      const w = window.open("", "_blank", "width=1000,height=750");
+                      if (!w) return;
+                      w.document.write(html);
+                      w.document.close();
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-green-600 text-xs font-medium text-green-700 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+                  >
+                    <ArrowDownToLine className="w-3.5 h-3.5" /> Download PDF
+                  </button>
+
+                  {/* Print */}
+                  <button
+                    onClick={() => {
+                      const w = window.open("", "_blank", "width=900,height=700");
+                      if (!w) return;
+                      const hasMgmt = loan.managementFeeRate > 0;
+                      const hasProc = (loan.processingFeeRate ?? 0) > 0;
+                      const fmtRWF  = (n: number) => "RWF " + n.toLocaleString();
+                      const rows = installments.map((r, i) => `
+                        <tr style="background:${i % 2 === 0 ? "#ffffff" : "#f9fafb"}">
+                          <td>${r.installmentNo}</td>
+                          <td>${new Date(r.dueDate).toLocaleDateString()}</td>
+                          <td style="color:#16a34a">${fmtRWF(r.principalDue)}</td>
+                          ${hasMgmt ? `<td style="color:#7e22ce">${fmtRWF(r.managementFeeDue)}</td>` : ""}
+                          ${hasProc ? `<td style="color:#0369a1">${fmtRWF(r.processingFeeDue ?? 0)}</td>` : ""}
+                          <td style="color:#b45309">${fmtRWF(r.interestDue)}</td>
+                          <td style="font-weight:700">${fmtRWF(r.totalDue)}</td>
+                          <td>${r.amountPaid > 0 ? fmtRWF(r.amountPaid) : "—"}</td>
+                          <td style="text-transform:capitalize">${r.status}</td>
+                        </tr>`).join("");
+                      const totPrincipal = installments.reduce((s, r) => s + r.principalDue, 0);
+                      const totMgmt      = installments.reduce((s, r) => s + r.managementFeeDue, 0);
+                      const totProc      = installments.reduce((s, r) => s + (r.processingFeeDue ?? 0), 0);
+                      const totInterest  = installments.reduce((s, r) => s + r.interestDue, 0);
+                      const totDue       = installments.reduce((s, r) => s + r.totalDue, 0);
+                      w.document.write(`<!DOCTYPE html><html><head><title>Payment Schedule</title>
+                        <style>body{font-family:Arial,sans-serif;font-size:12px;color:#111;margin:24px}
+                        table{width:100%;border-collapse:collapse}
+                        td,th{padding:7px 10px;border-bottom:1px solid #e5e7eb}
+                        th{background:#052e16;color:#fff;text-align:left;font-size:11px}
+                        tfoot td{background:#f0fdf4;font-weight:700;border-top:2px solid #16a34a}
+                        h2{margin:0 0 4px}p{margin:0 0 12px;color:#555;font-size:11px}
+                        @media print{button{display:none}}</style></head>
+                        <body>
+                          <h2>Payment Schedule — ${loan.id.toUpperCase()}</h2>
+                          <p>Customer: ${loan.customer?.names ?? ""} &nbsp;·&nbsp; ${loan.totalInstallments} installments &nbsp;·&nbsp; ${loan.interestMethod} rate</p>
+                          <table>
+                            <thead><tr>
+                              <th>#</th><th>Due Date</th><th>Principal</th>
+                              ${hasMgmt ? "<th>Mgmt Fee</th>" : ""}
+                              ${hasProc ? "<th>Proc Fee</th>" : ""}
+                              <th>Interest</th><th>Total Due</th><th>Paid</th><th>Status</th>
+                            </tr></thead>
+                            <tbody>${rows}</tbody>
+                            <tfoot><tr>
+                              <td colspan="2">TOTALS</td>
+                              <td>${fmtRWF(totPrincipal)}</td>
+                              ${hasMgmt ? `<td>${fmtRWF(totMgmt)}</td>` : ""}
+                              ${hasProc ? `<td>${fmtRWF(totProc)}</td>` : ""}
+                              <td>${fmtRWF(totInterest)}</td>
+                              <td>${fmtRWF(totDue)}</td>
+                              <td colspan="2"></td>
+                            </tr></tfoot>
+                          </table>
+                          <script>window.onload=()=>window.print();<\/script>
+                        </body></html>`);
+                      w.document.close();
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-xs font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                  >
+                    <Printer className="w-3.5 h-3.5" /> Print
+                  </button>
+                </div>
               </div>
             </CardHeader>
             <div className="overflow-x-auto">
@@ -2064,6 +2884,17 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                               <span className="text-gray-300 dark:text-gray-600 text-xs">—</span>
                             )}
                           </td>
+                          {canEditLoan && (
+                            <td className="px-4 py-3">
+                              <button
+                                type="button"
+                                onClick={() => setEditingPayment(p)}
+                                className="text-xs font-medium text-amber-600 dark:text-amber-400 hover:underline"
+                              >
+                                Edit
+                              </button>
+                            </td>
+                          )}
                         </motion.tr>
                       );
                     })}
@@ -2362,7 +3193,11 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
         <TopUpForm
           loan={loan}
           onClose={() => setShowTopUpModal(false)}
-          onSaved={() => { setShowTopUpModal(false); fetchData(); }}
+          onSaved={(newLoanId?: string) => {
+            setShowTopUpModal(false);
+            if (newLoanId) router.push(`/loans/${newLoanId}`);
+            else fetchData();
+          }}
         />
       </Modal>
 
@@ -2436,6 +3271,37 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
           </div>
         </div>
       </Modal>
+
+      {/* ── Restructure Modal ────────────────────────────────────────── */}
+      <Modal isOpen={showRestructureModal} onClose={() => setShowRestructureModal(false)} title="Restructure Loan" size="md">
+        <RestructureForm
+          loan={loan}
+          onClose={() => setShowRestructureModal(false)}
+          onSaved={(newLoanId) => { setShowRestructureModal(false); router.push(`/loans/${newLoanId}`); }}
+        />
+      </Modal>
+
+      {/* ── Edit Loan Modal (super_admin) ─────────────────────────────── */}
+      {canEditLoan && (
+        <Modal isOpen={showEditLoanModal} onClose={() => setShowEditLoanModal(false)} title="Edit Loan" size="lg">
+          <EditLoanForm
+            loan={loan}
+            onClose={() => setShowEditLoanModal(false)}
+            onSaved={() => { setShowEditLoanModal(false); fetchData(); }}
+          />
+        </Modal>
+      )}
+
+      {/* ── Edit Payment Modal (super_admin) ──────────────────────────── */}
+      {canEditLoan && editingPayment && (
+        <Modal isOpen={!!editingPayment} onClose={() => setEditingPayment(null)} title="Edit Payment" size="sm">
+          <EditPaymentForm
+            payment={editingPayment}
+            onClose={() => setEditingPayment(null)}
+            onSaved={() => { setEditingPayment(null); fetchData(); }}
+          />
+        </Modal>
+      )}
 
       {/* ── Contract Fullscreen Modal ──────────────────────────────────── */}
       {showContractModal && (

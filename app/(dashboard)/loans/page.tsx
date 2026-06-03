@@ -290,6 +290,7 @@ export default function LoansPage() {
                 <tr className="border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/30">
                   {[
                     "Loan / Customer",
+                    ...(role === "super_admin" ? ["Company"] : []),
                     "Class · Status",
                     "Loan Amount",
                     "Principal Paid",
@@ -329,6 +330,15 @@ export default function LoansPage() {
                             {loan.customerName}
                           </Link>
                         </td>
+
+                        {/* Company (super_admin only) */}
+                        {role === "super_admin" && (
+                          <td className="px-4 py-3.5">
+                            <p className="text-xs font-medium text-gray-700 dark:text-gray-300 truncate max-w-[120px]">
+                              {(loan as any).companyName ?? loan.companyId}
+                            </p>
+                          </td>
+                        )}
 
                         {/* Class · Status */}
                         <td className="px-4 py-3.5">

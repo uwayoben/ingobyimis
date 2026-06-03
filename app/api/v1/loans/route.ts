@@ -10,6 +10,7 @@ const createSchema = z.object({
   customerId:             z.string().min(1),
   branchName:             z.string().optional(),
   purpose:                z.string().min(1),
+  economicSector:         z.string().optional(),
   amount:                 z.number().positive(),
   annualInterestRate:     z.number().positive(),
   interestMethod:         z.enum(["flat", "declining"]),
@@ -48,8 +49,10 @@ export async function GET(request: Request) {
     const status = searchParams.get("status");
     const skip   = (page - 1) * limit;
 
+    const isSuperAdmin = auth.role === "super_admin";
+
     const where = {
-      companyId: auth.companyId!,
+      ...(isSuperAdmin ? {} : { companyId: auth.companyId! }),
       ...(status && status !== "all" && { status: status as any }),
       ...(search && {
         OR: [
@@ -67,6 +70,7 @@ export async function GET(request: Request) {
         take: limit,
         include: {
           customer: { select: { id: true, names: true } },
+          company:  { select: { id: true, name: true } },
           fees: true,
         },
       }),
@@ -104,6 +108,7 @@ export async function GET(request: Request) {
     const data = loans.map((l) => ({
       ...l,
       customerName:       l.customer.names,
+      companyName:        l.company.name,
       annualInterestRate: Number(l.annualInterestRate),
       provisioningRate:   Number(l.provisioningRate),
       managementFeeRate:  Number(l.managementFeeRate),
@@ -202,6 +207,7 @@ export async function POST(request: Request) {
           loanOfficerId:          auth.userId,
           branchName:             d.branchName,
           purpose:                d.purpose,
+          economicSector:         d.economicSector,
           amount:                 d.amount,
           annualInterestRate:     d.annualInterestRate,
           interestMethod:         d.interestMethod,

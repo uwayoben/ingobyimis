@@ -56,6 +56,7 @@ const EXPENSE_CATEGORIES = [
   "Personal Expenses",
   "Administrative Expenses",
   "Non Operating Expenses",
+  "Bank Charges",
 ];
 const ASSET_CATEGORIES = ["Furniture","Equipment","Vehicles","Electronics","Buildings","Other"];
 

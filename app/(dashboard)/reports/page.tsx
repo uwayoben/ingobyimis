@@ -265,6 +265,345 @@ function DateRangeFilter({
 function OverviewTab({ data, dark, onBNR }: { data: SummaryData; dark: boolean; onBNR: () => void }) {
   const gridColor = dark ? "#1f2937" : "#f3f4f6";
   const textColor = dark ? "#6b7280" : "#9ca3af";
+  const [dlIncome,    setDlIncome]    = useState(false);
+  const [dlPortfolio, setDlPortfolio] = useState(false);
+  const [dlCRB,       setDlCRB]       = useState(false);
+
+  const handleIncomeReport = async () => {
+    setDlIncome(true);
+    try {
+      const res  = await apiFetch("/api/v1/expenses");
+      const json = await res.json();
+      const expenses: any[] = json.data ?? json ?? [];
+
+      const { income } = data;
+      const totalPaid   = expenses.filter((e) => e.isPaid).reduce((s: number, e: any) => s + e.amount, 0);
+      const totalUnpaid = expenses.filter((e) => !e.isPaid).reduce((s: number, e: any) => s + e.amount, 0);
+      const totalExpAmt = expenses.reduce((s: number, e: any) => s + e.amount, 0);
+      const netProfit   = income.totalIncome - totalExpAmt;
+      const today       = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+      const companyName = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}").companyName ?? "Company" : "Company";
+
+      const expRows = expenses.map((e: any, i: number) => `
+        <tr style="background:${i % 2 === 0 ? "#fff" : "#f9fafb"}">
+          <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb">${new Date(e.date).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"})}</td>
+          <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb">${e.category}</td>
+          <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb">${e.description}</td>
+          <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;color:#dc2626;font-weight:600">RWF ${e.amount.toLocaleString()}</td>
+          <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb"><span style="padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;${e.isPaid?"background:#dcfce7;color:#166534":"background:#fef3c7;color:#92400e"}">${e.isPaid?"Paid":"Unpaid"}</span></td>
+        </tr>`).join("");
+
+      const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Income & Expense Report</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#1a1a1a;background:#fff}
+  .page{max-width:900px;margin:0 auto;padding:36px}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px;padding-bottom:20px;border-bottom:3px solid #166534}
+  .co-name{font-size:20px;font-weight:700;color:#166534}.co-sub{font-size:11px;color:#888;margin-top:2px}
+  .title h1{font-size:22px;font-weight:800;color:#166534;text-align:right}.title p{font-size:10px;color:#666;text-align:right;line-height:1.6}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px}
+  .box{background:#f8fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px}
+  .box h3{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#9ca3af;margin-bottom:6px}
+  .box p{font-size:15px;font-weight:800;color:#111}.box .sub{font-size:10px;color:#888;margin-top:2px;font-weight:400}
+  .section-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:#374151;margin:18px 0 8px;border-bottom:1px solid #e5e7eb;padding-bottom:6px}
+  table{width:100%;border-collapse:collapse;margin-bottom:16px}
+  thead th{background:#052e16;color:#fff;text-align:left;padding:7px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px}
+  tfoot td{background:#f0fdf4;font-weight:700;padding:7px 10px;border-top:2px solid #16a34a;font-size:11px}
+  .net{text-align:right;font-size:14px;font-weight:800;padding:12px 0;border-top:2px solid #111}
+  .toolbar{position:fixed;top:14px;right:14px;display:flex;gap:8px}
+  .btn-dl{background:#166534;color:#fff;border:none;padding:7px 16px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer}
+  .btn-pr{background:#fff;color:#166534;border:2px solid #166534;padding:7px 16px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer}
+  @media print{.toolbar{display:none}.page{padding:20px}}
+</style></head>
+<body>
+<div class="toolbar">
+  <button class="btn-pr" onclick="window.print()">🖨 Print</button>
+  <button class="btn-dl" id="dlBtn" onclick="downloadPDF()">⬇ Download PDF</button>
+</div>
+<div class="page" id="content">
+  <div class="header">
+    <div><div class="co-name">${companyName}</div><div class="co-sub">NDFSP</div></div>
+    <div class="title"><h1>INCOME & EXPENSE REPORT</h1><p>Generated: ${today}</p></div>
+  </div>
+
+  <div class="grid3">
+    <div class="box"><h3>Total Income</h3><p style="color:#166534">RWF ${income.totalIncome.toLocaleString()}</p><div class="sub">Cash collected: RWF ${income.totalCollected.toLocaleString()}</div></div>
+    <div class="box"><h3>Total Expenses</h3><p style="color:#dc2626">RWF ${totalExpAmt.toLocaleString()}</p><div class="sub">Paid: RWF ${totalPaid.toLocaleString()} · Unpaid: RWF ${totalUnpaid.toLocaleString()}</div></div>
+    <div class="box"><h3>Net ${netProfit >= 0 ? "Profit" : "Loss"}</h3><p style="color:${netProfit >= 0 ? "#166534" : "#dc2626"}">RWF ${Math.abs(netProfit).toLocaleString()}</p><div class="sub">${netProfit >= 0 ? "Surplus" : "Deficit"}</div></div>
+  </div>
+
+  <div class="grid2">
+    <div>
+      <div class="section-title">Income Breakdown</div>
+      <table>
+        <thead><tr><th>Source</th><th style="text-align:right">Amount</th></tr></thead>
+        <tbody>
+          <tr style="background:#fff"><td style="padding:7px 10px;border-bottom:1px solid #e5e7eb">Interest Income</td><td style="padding:7px 10px;text-align:right;font-weight:600;color:#166534;border-bottom:1px solid #e5e7eb">RWF ${income.interestIncome.toLocaleString()}</td></tr>
+          <tr style="background:#f9fafb"><td style="padding:7px 10px;border-bottom:1px solid #e5e7eb">Penalty Income</td><td style="padding:7px 10px;text-align:right;font-weight:600;color:#166534;border-bottom:1px solid #e5e7eb">RWF ${income.penaltyIncome.toLocaleString()}</td></tr>
+          <tr style="background:#fff"><td style="padding:7px 10px;border-bottom:1px solid #e5e7eb">Processing Fees</td><td style="padding:7px 10px;text-align:right;font-weight:600;color:#166534;border-bottom:1px solid #e5e7eb">RWF ${income.feeIncome.toLocaleString()}</td></tr>
+        </tbody>
+        <tfoot><tr><td>TOTAL INCOME</td><td style="text-align:right">RWF ${income.totalIncome.toLocaleString()}</td></tr></tfoot>
+      </table>
+    </div>
+    <div>
+      <div class="section-title">Expenses by Category</div>
+      <table>
+        <thead><tr><th>Category</th><th style="text-align:right">Amount</th></tr></thead>
+        <tbody>
+          ${data.expenses.byCategory.map((c,i)=>`<tr style="background:${i%2===0?"#fff":"#f9fafb"}"><td style="padding:7px 10px;border-bottom:1px solid #e5e7eb">${c.category}</td><td style="padding:7px 10px;text-align:right;font-weight:600;color:#dc2626;border-bottom:1px solid #e5e7eb">RWF ${c.amount.toLocaleString()}</td></tr>`).join("")}
+        </tbody>
+        <tfoot><tr><td>TOTAL EXPENSES</td><td style="text-align:right">RWF ${totalExpAmt.toLocaleString()}</td></tr></tfoot>
+      </table>
+    </div>
+  </div>
+
+  <div class="section-title">Expense Records (${expenses.length} entries)</div>
+  <table>
+    <thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Status</th></tr></thead>
+    <tbody>${expRows}</tbody>
+    <tfoot><tr><td colspan="3">TOTALS</td><td>RWF ${totalExpAmt.toLocaleString()}</td><td></td></tr></tfoot>
+  </table>
+
+  <div class="net" style="color:${netProfit>=0?"#166534":"#dc2626"}">
+    NET ${netProfit >= 0 ? "PROFIT" : "LOSS"}: RWF ${Math.abs(netProfit).toLocaleString()}
+  </div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script>
+  function downloadPDF(){
+    var btn=document.getElementById('dlBtn');
+    btn.disabled=true;btn.textContent='Generating…';
+    html2pdf().set({
+      margin:[8,8,8,8],filename:'Income-Expense-Report-${new Date().toISOString().slice(0,10)}.pdf',
+      image:{type:'jpeg',quality:0.98},
+      html2canvas:{scale:2,useCORS:true,logging:false},
+      jsPDF:{unit:'mm',format:'a4',orientation:'portrait'}
+    }).from(document.getElementById('content')).save().then(function(){
+      btn.disabled=false;btn.textContent='⬇ Download PDF';
+    });
+  }
+  window.onload=()=>window.print();
+</script>
+</body></html>`;
+
+      const w = window.open("", "_blank", "width=960,height=750");
+      if (!w) return;
+      w.document.write(html);
+      w.document.close();
+    } catch { /* silent */ }
+    finally { setDlIncome(false); }
+  };
+
+  const handlePortfolioReport = async () => {
+    setDlPortfolio(true);
+    try {
+      const res  = await apiFetch("/api/v1/loans?limit=100");
+      const json = await res.json();
+      const loans: any[] = json.data ?? [];
+      const { portfolio } = data;
+      const today       = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+      const companyName = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}").companyName ?? "Company" : "Company";
+
+      const classColors: Record<string,string> = {
+        Normal:      "#166534", Watch: "#92400e", Substandard: "#9a3412",
+        Doubtful:    "#991b1b", Loss: "#881337",
+      };
+      const statusColors: Record<string,string> = {
+        active: "#166534", overdue: "#dc2626", pending: "#d97706",
+        approved: "#1d4ed8", completed: "#6b7280", written_off: "#374151",
+      };
+
+      const loanRows = loans.map((l: any, i: number) => {
+        const outstanding = l.balanceOutstanding ?? 0;
+        const sc = statusColors[l.status] ?? "#374151";
+        const cc = classColors[l.loanClass] ?? "#374151";
+        return `<tr style="background:${i % 2 === 0 ? "#fff" : "#f9fafb"}">
+          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-size:10px">${l.id?.toUpperCase()}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb">${l.customerName ?? l.customer?.names ?? "—"}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right">RWF ${(l.amount ?? 0).toLocaleString()}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:600;color:${outstanding > 0 ? "#dc2626" : "#6b7280"}">RWF ${outstanding.toLocaleString()}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb"><span style="padding:2px 6px;border-radius:10px;font-size:9px;font-weight:700;text-transform:capitalize;background:${sc}20;color:${sc}">${l.status}</span></td>
+          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb"><span style="padding:2px 6px;border-radius:10px;font-size:9px;font-weight:700;background:${cc}20;color:${cc}">${l.loanClass}</span></td>
+          <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:right">${l.installmentsPaid ?? 0}/${l.totalInstallments ?? 0}</td>
+        </tr>`;
+      }).join("");
+
+      const byStatusRows = portfolio.byStatus.map((s: any) => {
+        const sc = statusColors[s.status] ?? "#374151";
+        return `<tr style="background:#fff"><td style="padding:6px 10px;border-bottom:1px solid #e5e7eb"><span style="padding:2px 6px;border-radius:8px;font-size:9px;font-weight:700;text-transform:capitalize;background:${sc}20;color:${sc}">${s.status}</span></td><td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${s.count}</td><td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;text-align:right">RWF ${(s.amount ?? 0).toLocaleString()}</td></tr>`;
+      }).join("");
+
+      const classRates: Record<string,number> = { Normal:1, Watch:3, Substandard:20, Doubtful:50, Loss:100 };
+      const byClassRows = (["Normal","Watch","Substandard","Doubtful","Loss"]).map((cls: string) => {
+        const row = portfolio.byClass.find((b: any) => b.class === cls) ?? { count: 0, amount: 0 };
+        const provision = Math.round((row.amount ?? 0) * classRates[cls] / 100);
+        const cc = classColors[cls] ?? "#374151";
+        return `<tr style="background:#fff"><td style="padding:6px 10px;border-bottom:1px solid #e5e7eb"><span style="padding:2px 6px;border-radius:8px;font-size:9px;font-weight:700;background:${cc}20;color:${cc}">${cls}</span></td><td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${row.count}</td><td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;text-align:right">RWF ${(row.amount??0).toLocaleString()}</td><td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${classRates[cls]}%</td><td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;text-align:right">RWF ${provision.toLocaleString()}</td></tr>`;
+      }).join("");
+
+      const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Portfolio Report</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;color:#1a1a1a;background:#fff}
+  .page{max-width:1000px;margin:0 auto;padding:32px}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:3px solid #166534}
+  .co-name{font-size:20px;font-weight:700;color:#166534}.co-sub{font-size:11px;color:#888;margin-top:2px}
+  .title h1{font-size:20px;font-weight:800;color:#166534;text-align:right}.title p{font-size:10px;color:#666;text-align:right;line-height:1.6}
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px}
+  .box{background:#f8fafb;border:1px solid #e5e7eb;border-radius:8px;padding:10px}
+  .box h3{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.7px;color:#9ca3af;margin-bottom:4px}
+  .box p{font-size:14px;font-weight:800;color:#111}.box .sub{font-size:9px;color:#888;margin-top:1px;font-weight:400}
+  .section{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:#374151;margin:16px 0 6px;border-bottom:1px solid #e5e7eb;padding-bottom:4px}
+  table{width:100%;border-collapse:collapse;margin-bottom:4px}
+  thead th{background:#052e16;color:#fff;text-align:left;padding:6px 8px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px}
+  thead th.r{text-align:right}
+  tfoot td{background:#f0fdf4;font-weight:700;padding:6px 8px;border-top:2px solid #16a34a;font-size:10px}
+  .toolbar{position:fixed;top:14px;right:14px;display:flex;gap:8px}
+  .btn-dl{background:#166534;color:#fff;border:none;padding:7px 16px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer}
+  .btn-pr{background:#fff;color:#166534;border:2px solid #166534;padding:7px 16px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer}
+  @media print{.toolbar{display:none}.page{padding:16px}}
+</style></head>
+<body>
+<div class="toolbar">
+  <button class="btn-pr" onclick="window.print()">🖨 Print</button>
+  <button class="btn-dl" id="dlBtn" onclick="downloadPDF()">⬇ Download PDF</button>
+</div>
+<div class="page" id="content">
+  <div class="header">
+    <div><div class="co-name">${companyName}</div><div class="co-sub">NDFSP</div></div>
+    <div class="title"><h1>PORTFOLIO REPORT</h1><p>Generated: ${today}<br/>${loans.length} loans shown</p></div>
+  </div>
+
+  <div class="grid4">
+    <div class="box"><h3>Total Loans</h3><p>${portfolio.totalLoans}</p></div>
+    <div class="box"><h3>Active</h3><p style="color:#166534">${portfolio.activeLoans}</p></div>
+    <div class="box"><h3>Overdue</h3><p style="color:#dc2626">${portfolio.overdueLoans}</p></div>
+    <div class="box"><h3>Total Outstanding</h3><p>RWF ${(portfolio.totalOutstanding/1_000_000).toFixed(1)}M</p></div>
+    <div class="box"><h3>NPL Amount</h3><p style="color:#dc2626">RWF ${(portfolio.nplAmount/1_000_000).toFixed(1)}M</p></div>
+    <div class="box"><h3>NPL Rate</h3><p style="color:${portfolio.nplRate>5?"#dc2626":"#166534"}">${portfolio.nplRate.toFixed(1)}%</p></div>
+    <div class="box"><h3>Total Provision</h3><p>RWF ${(portfolio.totalProvision/1_000_000).toFixed(1)}M</p></div>
+    <div class="box"><h3>Provision Coverage</h3><p>${portfolio.provisionCoverage.toFixed(1)}%</p></div>
+  </div>
+
+  <div class="grid2">
+    <div>
+      <div class="section">By Status</div>
+      <table><thead><tr><th>Status</th><th class="r">Loans</th><th class="r">Outstanding</th></tr></thead>
+      <tbody>${byStatusRows}</tbody>
+      <tfoot><tr><td>TOTAL</td><td style="text-align:right">${portfolio.totalLoans}</td><td style="text-align:right">RWF ${portfolio.totalOutstanding.toLocaleString()}</td></tr></tfoot></table>
+    </div>
+    <div>
+      <div class="section">By BNR Class (Provisioning)</div>
+      <table><thead><tr><th>Class</th><th class="r">Loans</th><th class="r">Outstanding</th><th class="r">Rate</th><th class="r">Provision</th></tr></thead>
+      <tbody>${byClassRows}</tbody>
+      <tfoot><tr><td>TOTAL</td><td></td><td style="text-align:right">RWF ${portfolio.totalOutstanding.toLocaleString()}</td><td></td><td style="text-align:right">RWF ${portfolio.totalProvision.toLocaleString()}</td></tr></tfoot></table>
+    </div>
+  </div>
+
+  <div class="section">Loan Details (${loans.length} records)</div>
+  <table>
+    <thead><tr><th>Loan ID</th><th>Customer</th><th class="r">Amount</th><th class="r">Outstanding</th><th>Status</th><th>Class</th><th class="r">Installments</th></tr></thead>
+    <tbody>${loanRows}</tbody>
+    <tfoot><tr>
+      <td colspan="2">TOTALS (${loans.length} loans)</td>
+      <td style="text-align:right">RWF ${loans.reduce((s:number,l:any)=>s+(l.amount??0),0).toLocaleString()}</td>
+      <td style="text-align:right">RWF ${loans.reduce((s:number,l:any)=>s+(l.balanceOutstanding??0),0).toLocaleString()}</td>
+      <td colspan="3"></td>
+    </tr></tfoot>
+  </table>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script>
+  function downloadPDF(){
+    var btn=document.getElementById('dlBtn');
+    btn.disabled=true;btn.textContent='Generating…';
+    html2pdf().set({
+      margin:[6,6,6,6],filename:'Portfolio-Report-${new Date().toISOString().slice(0,10)}.pdf',
+      image:{type:'jpeg',quality:0.98},
+      html2canvas:{scale:2,useCORS:true,logging:false},
+      jsPDF:{unit:'mm',format:'a4',orientation:'landscape'}
+    }).from(document.getElementById('content')).save().then(function(){
+      btn.disabled=false;btn.textContent='⬇ Download PDF';
+    });
+  }
+  window.onload=()=>window.print();
+</script>
+</body></html>`;
+
+      const w = window.open("", "_blank", "width=1100,height=800");
+      if (!w) return;
+      w.document.write(html);
+      w.document.close();
+    } catch { /* silent */ }
+    finally { setDlPortfolio(false); }
+  };
+
+  const handleCRBReport = async () => {
+    setDlCRB(true);
+    try {
+      const res  = await apiFetch("/api/v1/loans?limit=100");
+      const json = await res.json();
+      const loans: any[] = json.data ?? [];
+
+      const accountTypeMap: Record<string,string> = {
+        active: "Open", overdue: "Delinquent", completed: "Closed",
+        written_off: "Written Off", pending: "Pending", approved: "Approved",
+      };
+
+      const esc = (v: any) => {
+        const s = String(v ?? "").replace(/"/g, '""');
+        return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s}"` : s;
+      };
+
+      const headers = [
+        "Borrower Name", "National ID", "Phone", "Gender", "Province", "District",
+        "Account Number", "Loan Type", "Credit Limit (RWF)", "Outstanding Balance (RWF)",
+        "Amount Repaid (RWF)", "Days Overdue", "BNR Classification", "Account Status",
+        "Disbursement Date", "Maturity Date", "Last Payment Date", "Interest Rate (%)",
+        "Installments Paid", "Total Installments",
+      ];
+
+      const csvRows = loans.map((l: any) => {
+        const c = l.customer ?? {};
+        return [
+          esc(c.names),
+          esc(c.nationalId),
+          esc(c.phone),
+          esc(c.gender),
+          esc(c.province),
+          esc(c.district),
+          esc(l.id?.toUpperCase()),
+          esc(l.interestMethod === "flat" ? "Flat Rate" : "Declining Balance"),
+          esc(l.amount ?? 0),
+          esc(l.balanceOutstanding ?? 0),
+          esc(l.amountRepaidPrincipal ?? 0),
+          esc(l.daysOverdue ?? 0),
+          esc(l.loanClass),
+          esc(accountTypeMap[l.status] ?? l.status),
+          esc(l.disbursementDate ? new Date(l.disbursementDate).toISOString().slice(0,10) : ""),
+          esc(l.agreedMaturityDate ? new Date(l.agreedMaturityDate).toISOString().slice(0,10) : ""),
+          esc(l.lastPaymentDate ? new Date(l.lastPaymentDate).toISOString().slice(0,10) : ""),
+          esc(Number(l.annualInterestRate ?? 0).toFixed(3)),
+          esc(l.installmentsPaid ?? 0),
+          esc(l.totalInstallments ?? 0),
+        ].join(",");
+      });
+
+      const csv  = [headers.join(","), ...csvRows].join("\r\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = `CRB-Report-${new Date().toISOString().slice(0,10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch { /* silent */ }
+    finally { setDlCRB(false); }
+  };
 
   const barData = data.chartData.map((d) => ({
     month: d.month,
@@ -349,7 +688,7 @@ function OverviewTab({ data, dark, onBNR }: { data: SummaryData; dark: boolean; 
         {[
           { id: "bnr",       title: "BNR Compliance",    desc: "BNR-format Excel for submission",     icon: <FileCheck className="w-5 h-5" />,  badge: "Excel",     variant: "info"    as const },
           { id: "portfolio", title: "Portfolio Report",   desc: "Full loan portfolio and aging",        icon: <BarChart3 className="w-5 h-5" />,  badge: "Real-time", variant: "success" as const },
-          { id: "crb",       title: "CRB Report",        desc: "Credit reference bureau export",       icon: <Building2 className="w-5 h-5" />,  badge: "Monthly",   variant: "neutral" as const },
+          { id: "crb",       title: "CRB Report",        desc: "Credit reference bureau export",       icon: <Building2 className="w-5 h-5" />,  badge: "CSV",       variant: "neutral" as const },
           { id: "income",    title: "Income & Expense",   desc: "Revenue vs expenditure statement",     icon: <TrendingUp className="w-5 h-5" />, badge: "Period",    variant: "warning" as const },
         ].map((r) => (
           <div key={r.id} className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
@@ -360,10 +699,20 @@ function OverviewTab({ data, dark, onBNR }: { data: SummaryData; dark: boolean; 
             <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">{r.title}</h3>
             <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed mb-3">{r.desc}</p>
             <button
-              onClick={() => r.id === "bnr" && onBNR()}
-              className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
+              disabled={(r.id === "income" && dlIncome) || (r.id === "portfolio" && dlPortfolio) || (r.id === "crb" && dlCRB)}
+              onClick={() => {
+                if (r.id === "bnr")       onBNR();
+                if (r.id === "income")    handleIncomeReport();
+                if (r.id === "portfolio") handlePortfolioReport();
+                if (r.id === "crb")       handleCRBReport();
+              }}
+              className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors disabled:opacity-50">
               <Download className="w-3 h-3" />
-              {r.id === "bnr" ? "Download" : "Coming soon"}
+              {r.id === "bnr"       ? "Download" :
+               r.id === "income"    ? (dlIncome     ? "Loading…" : "Download") :
+               r.id === "portfolio" ? (dlPortfolio  ? "Loading…" : "Download") :
+               r.id === "crb"       ? (dlCRB        ? "Loading…" : "Download") :
+               "Coming soon"}
             </button>
           </div>
         ))}
@@ -435,6 +784,105 @@ function OverviewTab({ data, dark, onBNR }: { data: SummaryData; dark: boolean; 
 function IncomeTab({ data }: { data: SummaryData }) {
   const { income, expenses } = data;
   const netProfit = income.totalIncome - expenses.total;
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownloadExpenses = async () => {
+    setDownloading(true);
+    try {
+      const res  = await apiFetch("/api/v1/expenses");
+      const json = await res.json();
+      const list: any[] = json.data ?? json ?? [];
+
+      const today       = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+      const companyName = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}").companyName ?? "Company" : "Company";
+      const totalPaid   = list.filter((e) => e.isPaid).reduce((s: number, e: any) => s + e.amount, 0);
+      const totalUnpaid = list.filter((e) => !e.isPaid).reduce((s: number, e: any) => s + e.amount, 0);
+      const totalAll    = list.reduce((s: number, e: any) => s + e.amount, 0);
+
+      const rows = list.map((e: any, i: number) => `
+        <tr style="background:${i % 2 === 0 ? "#fff" : "#f9fafb"}">
+          <td style="padding:7px 12px;border-bottom:1px solid #e5e7eb">${new Date(e.date).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"})}</td>
+          <td style="padding:7px 12px;border-bottom:1px solid #e5e7eb">${e.category}</td>
+          <td style="padding:7px 12px;border-bottom:1px solid #e5e7eb">${e.description}</td>
+          <td style="padding:7px 12px;border-bottom:1px solid #e5e7eb;font-weight:700;color:#dc2626">RWF ${e.amount.toLocaleString()}</td>
+          <td style="padding:7px 12px;border-bottom:1px solid #e5e7eb">
+            <span style="padding:2px 8px;border-radius:12px;font-size:10px;font-weight:700;${e.isPaid ? "background:#dcfce7;color:#166534" : "background:#fef3c7;color:#92400e"}">${e.isPaid ? "Paid" : "Unpaid"}</span>
+          </td>
+        </tr>`).join("");
+
+      const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Expense Report</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#1a1a1a;background:#fff}
+  .page{max-width:860px;margin:0 auto;padding:36px}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px;padding-bottom:20px;border-bottom:3px solid #166534}
+  .co-name{font-size:20px;font-weight:700;color:#166534}.co-sub{font-size:11px;color:#888;margin-top:2px}
+  .title h1{font-size:22px;font-weight:800;color:#166534;text-align:right}.title p{font-size:10px;color:#666;text-align:right;line-height:1.6}
+  .summary{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:22px}
+  .box{background:#f8fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px}
+  .box h3{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#9ca3af;margin-bottom:4px}
+  .box p{font-size:16px;font-weight:800;color:#111}
+  table{width:100%;border-collapse:collapse}
+  thead th{background:#052e16;color:#fff;text-align:left;padding:8px 12px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px}
+  tfoot td{background:#f0fdf4;font-weight:700;padding:8px 12px;border-top:2px solid #16a34a;font-size:11px}
+  .toolbar{position:fixed;top:14px;right:14px;display:flex;gap:8px}
+  .btn-dl{background:#166534;color:#fff;border:none;padding:7px 16px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer}
+  .btn-pr{background:#fff;color:#166534;border:2px solid #166534;padding:7px 16px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer}
+  @media print{.toolbar{display:none}.page{padding:20px}}
+</style></head>
+<body>
+<div class="toolbar">
+  <button class="btn-pr" onclick="window.print()">🖨 Print</button>
+  <button class="btn-dl" id="dlBtn" onclick="downloadPDF()">⬇ Download PDF</button>
+</div>
+<div class="page" id="content">
+  <div class="header">
+    <div><div class="co-name">${companyName}</div><div class="co-sub">NDFSP</div></div>
+    <div class="title"><h1>EXPENSE REPORT</h1><p>Generated: ${today}<br/>${list.length} records</p></div>
+  </div>
+  <div class="summary">
+    <div class="box"><h3>Total Expenses</h3><p>RWF ${totalAll.toLocaleString()}</p></div>
+    <div class="box"><h3>Total Paid</h3><p style="color:#166534">RWF ${totalPaid.toLocaleString()}</p></div>
+    <div class="box"><h3>Total Unpaid</h3><p style="color:#b45309">RWF ${totalUnpaid.toLocaleString()}</p></div>
+  </div>
+  <table>
+    <thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Status</th></tr></thead>
+    <tbody>${rows}</tbody>
+    <tfoot><tr>
+      <td colspan="3"><strong>TOTALS</strong></td>
+      <td><strong>RWF ${totalAll.toLocaleString()}</strong></td>
+      <td></td>
+    </tr></tfoot>
+  </table>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script>
+  function downloadPDF(){
+    var btn=document.getElementById('dlBtn');
+    btn.disabled=true;btn.textContent='Generating…';
+    html2pdf().set({
+      margin:[8,8,8,8],filename:'Expense-Report-${new Date().toISOString().slice(0,10)}.pdf',
+      image:{type:'jpeg',quality:0.98},
+      html2canvas:{scale:2,useCORS:true,logging:false},
+      jsPDF:{unit:'mm',format:'a4',orientation:'portrait'}
+    }).from(document.getElementById('content')).save().then(function(){
+      btn.disabled=false;btn.textContent='⬇ Download PDF';
+    });
+  }
+  window.onload=()=>window.print();
+</script>
+</body></html>`;
+
+      const w = window.open("", "_blank", "width=960,height=750");
+      if (!w) return;
+      w.document.write(html);
+      w.document.close();
+    } catch {
+      // silent
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
@@ -504,7 +952,19 @@ function IncomeTab({ data }: { data: SummaryData }) {
 
         {/* Expenses breakdown */}
         <Card>
-          <CardHeader><CardTitle>Expenses Breakdown</CardTitle></CardHeader>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle>Expenses Breakdown</CardTitle>
+              <button
+                onClick={handleDownloadExpenses}
+                disabled={downloading}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-green-600 text-xs font-medium text-green-700 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors disabled:opacity-50"
+              >
+                <Download className="w-3.5 h-3.5" />
+                {downloading ? "Loading…" : "Download Report"}
+              </button>
+            </div>
+          </CardHeader>
           <CardContent>
             <div className="space-y-1">
               <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Expense Categories</div>

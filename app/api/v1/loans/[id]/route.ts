@@ -11,7 +11,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const { id } = await params;
 
     const loan = await prisma.loan.findFirst({
-      where: { id, companyId: auth.companyId! },
+      where: auth.role === "super_admin" ? { id } : { id, companyId: auth.companyId! },
       include: {
         customer:     true,
         fees:         true,
@@ -47,7 +47,11 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const { id } = await params;
     const body   = await request.json();
 
-    const loan = await prisma.loan.findFirst({ where: { id, companyId: auth.companyId! } });
+    const isSuperAdmin = auth.role === "super_admin";
+
+    const loan = await prisma.loan.findFirst({
+      where: isSuperAdmin ? { id } : { id, companyId: auth.companyId! },
+    });
     if (!loan) return notFound("Loan not found.");
 
     // Role-based action enforcement
@@ -60,8 +64,63 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       return forbidden("You do not have permission to disburse loans.");
     }
 
+    // Field editing — super_admin only, any loan status
+    const editableFields = ["purpose", "amount", "annualInterestRate", "interestMethod",
+      "totalInstallments", "repaymentFrequencyDays", "gracePeriodDays",
+      "branchName", "managementFeeRate", "processingFeeRate", "penaltyRatePerDay"];
+    const hasFieldEdit = editableFields.some((f) => body[f] !== undefined);
+    if (hasFieldEdit && !isSuperAdmin) {
+      return forbidden("Only super_admin can edit loan details.");
+    }
+
     const updateData: Record<string, unknown> = {};
     if (body.status !== undefined) updateData.status = body.status;
+
+    if (hasFieldEdit && isSuperAdmin) {
+      if (body.purpose            !== undefined) updateData.purpose            = body.purpose;
+      if (body.branchName         !== undefined) updateData.branchName         = body.branchName || null;
+      if (body.interestMethod     !== undefined) updateData.interestMethod     = body.interestMethod;
+      if (body.gracePeriodDays    !== undefined) updateData.gracePeriodDays    = Number(body.gracePeriodDays);
+      if (body.penaltyRatePerDay  !== undefined) updateData.penaltyRatePerDay  = Number(body.penaltyRatePerDay);
+
+      const newAmount    = body.amount             !== undefined ? Number(body.amount)             : null;
+      const newRate      = body.annualInterestRate  !== undefined ? Number(body.annualInterestRate) : null;
+      const newN         = body.totalInstallments   !== undefined ? Number(body.totalInstallments)  : null;
+      const newFreqDays  = body.repaymentFrequencyDays !== undefined ? Number(body.repaymentFrequencyDays) : null;
+      const newMgmtRate  = body.managementFeeRate   !== undefined ? Number(body.managementFeeRate)  : null;
+      const newProcRate  = body.processingFeeRate   !== undefined ? Number(body.processingFeeRate)  : null;
+
+      if (newAmount    !== null) updateData.amount             = newAmount;
+      if (newRate      !== null) updateData.annualInterestRate = newRate;
+      if (newN         !== null) updateData.totalInstallments  = newN;
+      if (newFreqDays  !== null) updateData.repaymentFrequencyDays = newFreqDays;
+      if (newMgmtRate  !== null) updateData.managementFeeRate  = newMgmtRate;
+      if (newProcRate  !== null) updateData.processingFeeRate  = newProcRate;
+
+      // Recalculate totals when financial terms change
+      const principal  = newAmount   ?? loan.amount;
+      const annualRate = newRate     ?? Number(loan.annualInterestRate);
+      const n          = newN        ?? loan.totalInstallments;
+      const freqDays   = newFreqDays ?? loan.repaymentFrequencyDays;
+      const mgmtRate   = newMgmtRate ?? Number(loan.managementFeeRate);
+      const procRate   = newProcRate ?? Number((loan as any).processingFeeRate ?? 0);
+      const method     = (updateData.interestMethod ?? loan.interestMethod) as string;
+      const periodsPerYear = 360 / freqDays;
+      const r  = annualRate / 100 / periodsPerYear;
+      const m  = mgmtRate   / 100 / periodsPerYear;
+      const p  = procRate   / 100 / periodsPerYear;
+      const combined = r + m + p;
+      let totalRepayable: number;
+      if (method === "flat") {
+        totalRepayable = Math.round(principal + principal * r * n + principal * m * n + principal * p * n);
+      } else {
+        const emi = combined === 0 ? principal / n
+          : (principal * combined * Math.pow(1 + combined, n)) / (Math.pow(1 + combined, n) - 1);
+        totalRepayable = Math.round(emi * n);
+      }
+      updateData.totalRepayable     = totalRepayable;
+      updateData.balanceOutstanding = principal;
+    }
 
     if (body.signedContractUrl !== undefined) {
       updateData.signedContractUrl = body.signedContractUrl;
@@ -188,7 +247,9 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
 
     const { id } = await params;
 
-    const loan = await prisma.loan.findFirst({ where: { id, companyId: auth.companyId! } });
+    const loan = await prisma.loan.findFirst({
+      where: auth.role === "super_admin" ? { id } : { id, companyId: auth.companyId! },
+    });
     if (!loan) return notFound("Loan not found.");
 
     // Reverse disbursement ledger entry if the loan was disbursed

@@ -357,6 +357,7 @@ export default function NewLoanPage() {
     collateralDetails:"",
     // Purpose & Notes
     purpose:          "",
+    economicSector:   "",
     notes:            "",
     branchName:       "",
   });
@@ -435,6 +436,7 @@ export default function NewLoanPage() {
         body:    JSON.stringify({
           customerId:             form.customerId,
           purpose:                form.purpose,
+          economicSector:         form.economicSector || undefined,
           branchName:             form.branchName || undefined,
           amount:                 form.principal,
           annualInterestRate:     (parseFloat(form.monthlyRate) || 0) * 12,
@@ -793,6 +795,19 @@ export default function NewLoanPage() {
 
             {/* 6. Purpose & Notes */}
             <Section title="Purpose & Notes" defaultOpen={true}>
+              <Select
+                label="Economic Sector"
+                value={form.economicSector}
+                onChange={(e) => set("economicSector", e.target.value)}
+                options={[
+                  { value: "", label: "— Select sector —" },
+                  { value: "71.Agriculture, Livestock, Fishing",                              label: "71. Agriculture, Livestock, Fishing" },
+                  { value: "72.Public Works (Construction), Buildings, Residences/Homes",    label: "72. Public Works (Construction), Buildings, Residences/Homes" },
+                  { value: "73.Commerce, Restaurants, Hotels",                               label: "73. Commerce, Restaurants, Hotels" },
+                  { value: "74.Transport, Warehouses, Communications",                       label: "74. Transport, Warehouses, Communications" },
+                  { value: "75.Others",                                                      label: "75. Others" },
+                ]}
+              />
               <div className="space-y-1">
                 <label className="text-xs font-medium text-gray-700 dark:text-gray-300">
                   Loan Purpose <span className="text-red-500">*</span>
