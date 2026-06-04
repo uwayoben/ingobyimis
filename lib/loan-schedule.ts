@@ -120,9 +120,9 @@ export function classifyLoan(daysOverdue: number): {
   loanClass: "Normal" | "Watch" | "Substandard" | "Doubtful" | "Loss";
   provisioningRate: number;
 } {
-  if (daysOverdue === 0)   return { loanClass: "Normal",      provisioningRate: 1  };
-  if (daysOverdue <= 89)   return { loanClass: "Watch",       provisioningRate: 3  };
-  if (daysOverdue <= 179)  return { loanClass: "Substandard", provisioningRate: 20 };
-  if (daysOverdue <= 359)  return { loanClass: "Doubtful",    provisioningRate: 50 };
+  if (daysOverdue === 0)   return { loanClass: "Normal",      provisioningRate: 0   };
+  if (daysOverdue <= 89)   return { loanClass: "Watch",       provisioningRate: 1   };
+  if (daysOverdue <= 179)  return { loanClass: "Substandard", provisioningRate: 20  };
+  if (daysOverdue <= 359)  return { loanClass: "Doubtful",    provisioningRate: 50  };
   return                          { loanClass: "Loss",        provisioningRate: 100 };
 }

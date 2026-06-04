@@ -290,7 +290,7 @@ export async function GET(request: Request) {
 
     // Load template — xlsx-populate operates on the raw XML zip so all
     // colors, borders, and column widths are 100% preserved on output.
-    const templatePath = path.join(process.cwd(), "bnr format (1) (1).xlsx");
+    const templatePath = path.join(process.cwd(), "templates", "bnr-template.xlsx");
     const workbook = await XlsxPopulate.fromFileAsync(templatePath);
 
     // A1.3 Normal Loans — data starts row 12, 42 cols

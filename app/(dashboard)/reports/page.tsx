@@ -434,7 +434,7 @@ function OverviewTab({ data, dark, onBNR }: { data: SummaryData; dark: boolean; 
         return `<tr style="background:#fff"><td style="padding:6px 10px;border-bottom:1px solid #e5e7eb"><span style="padding:2px 6px;border-radius:8px;font-size:9px;font-weight:700;text-transform:capitalize;background:${sc}20;color:${sc}">${s.status}</span></td><td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${s.count}</td><td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;text-align:right">RWF ${(s.amount ?? 0).toLocaleString()}</td></tr>`;
       }).join("");
 
-      const classRates: Record<string,number> = { Normal:1, Watch:3, Substandard:20, Doubtful:50, Loss:100 };
+      const classRates: Record<string,number> = { Normal:0, Watch:1, Substandard:20, Doubtful:50, Loss:100 };
       const byClassRows = (["Normal","Watch","Substandard","Doubtful","Loss"]).map((cls: string) => {
         const row = portfolio.byClass.find((b: any) => b.class === cls) ?? { count: 0, amount: 0 };
         const provision = Math.round((row.amount ?? 0) * classRates[cls] / 100);
@@ -740,7 +740,7 @@ function OverviewTab({ data, dark, onBNR }: { data: SummaryData; dark: boolean; 
                 const row = data.portfolio.byClass.find((b) => b.class === cls);
                 const count  = row?.count  ?? 0;
                 const amount = row?.amount ?? 0;
-                const rates: Record<string, number> = { Normal: 1, Watch: 3, Substandard: 20, Doubtful: 50, Loss: 100 };
+                const rates: Record<string, number> = { Normal: 0, Watch: 1, Substandard: 20, Doubtful: 50, Loss: 100 };
                 const rate = rates[cls];
                 const provision = Math.round(amount * rate / 100);
                 const isNpl = ["Substandard","Doubtful","Loss"].includes(cls);

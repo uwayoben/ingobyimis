@@ -53,3 +53,5 @@ next-env.d.ts
 *.xlsx
 *.xls
 *.csv
+# but keep the BNR template tracked
+!templates/bnr-template.xlsx

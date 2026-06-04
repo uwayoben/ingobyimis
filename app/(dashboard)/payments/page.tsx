@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Search, CreditCard, TrendingDown, TrendingUp, DollarSign, ArrowDownUp, Loader2 } from "lucide-react";
+import { Plus, Search, CreditCard, TrendingDown, TrendingUp, DollarSign, ArrowDownUp, Loader2, Download } from "lucide-react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -204,6 +204,109 @@ export default function PaymentsPage() {
   const totalInterest = payments.reduce((s, p) => s + p.interest, 0);
   const totalPenalty = payments.reduce((s, p) => s + p.penalty, 0);
 
+  const handleExport = async () => {
+    const XLSXStyle = (await import("xlsx-js-style")).default;
+    const companyName = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}").companyName ?? "Company" : "Company";
+    const today = new Date().toLocaleDateString("en-GB");
+
+    const headerRow = [
+      "No.", "Date", "Reference", "Loan ID", "Customer",
+      "Total Amount (RWF)", "Principal (RWF)", "Interest (RWF)",
+      "Mgmt Fee (RWF)", "Proc Fee (RWF)", "Penalty (RWF)",
+      "Method", "Notes",
+    ];
+
+    const dataRows = payments.map((p, i) => [
+      i + 1,
+      new Date(p.date).toLocaleDateString("en-GB"),
+      p.reference,
+      p.loanId?.toUpperCase() ?? "",
+      p.customerName,
+      p.amount,
+      p.principal,
+      p.interest,
+      (p as any).managementFee ?? 0,
+      (p as any).processingFee ?? 0,
+      p.penalty,
+      methodConfig[p.method]?.label ?? p.method,
+      p.notes ?? "",
+    ]);
+
+    const titleRow = [`${companyName} — Payment Records Export`, ...Array(12).fill("")];
+    const dateRow  = [`Generated: ${today}  ·  ${payments.length} payments`, ...Array(12).fill("")];
+    const wsData   = [titleRow, dateRow, Array(13).fill(""), headerRow, ...dataRows];
+    const ws = XLSXStyle.utils.aoa_to_sheet(wsData);
+
+    ws["!cols"] = [
+      { wch: 5 }, { wch: 13 }, { wch: 18 }, { wch: 14 }, { wch: 24 },
+      { wch: 18 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 16 },
+      { wch: 14 }, { wch: 24 },
+    ];
+    ws["!merges"] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 12 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 12 } },
+    ];
+
+    const GREEN = "166534"; const WHITE = "FFFFFF"; const LGRAY = "F3F4F6";
+    const BORDER = { style: "thin", color: { rgb: "D1D5DB" } };
+    const allBorder = { top: BORDER, bottom: BORDER, left: BORDER, right: BORDER };
+    const cols = ["A","B","C","D","E","F","G","H","I","J","K","L","M"];
+
+    const t1 = ws["A1"]; if (t1) t1.s = { font: { bold: true, sz: 16, color: { rgb: WHITE }, name: "Calibri" }, fill: { fgColor: { rgb: GREEN } }, alignment: { horizontal: "center" } };
+    const t2 = ws["A2"]; if (t2) t2.s = { font: { sz: 11, color: { rgb: "6B7280" }, name: "Calibri" }, fill: { fgColor: { rgb: "F9FAFB" } }, alignment: { horizontal: "center" } };
+    cols.forEach((col) => {
+      const cell = ws[`${col}4`];
+      if (cell) cell.s = { font: { bold: true, sz: 10, color: { rgb: WHITE }, name: "Calibri" }, fill: { fgColor: { rgb: GREEN } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border: allBorder };
+    });
+
+    dataRows.forEach((row, ri) => {
+      const rowIndex = ri + 5;
+      const isAlt = ri % 2 === 1;
+      cols.forEach((col, ci) => {
+        const cell = ws[`${col}${rowIndex}`];
+        if (!cell) return;
+        cell.s = {
+          font: { sz: 10, name: "Calibri" },
+          fill: { fgColor: { rgb: isAlt ? LGRAY : WHITE } },
+          alignment: { horizontal: [0,5,6,7,8,9,10].includes(ci) ? "right" : "left", vertical: "center" },
+          border: allBorder,
+        };
+        if (ci === 5) cell.s.font = { ...cell.s.font, bold: true, color: { rgb: "166534" } };
+        if (ci === 10 && Number(row[ci]) > 0) cell.s.font = { ...cell.s.font, bold: true, color: { rgb: "DC2626" } };
+      });
+    });
+
+    ws["!rows"] = [{ hpt: 36 }, { hpt: 20 }, { hpt: 8 }, { hpt: 22 }, ...dataRows.map(() => ({ hpt: 18 }))];
+
+    // Totals row
+    const totRow = [
+      "TOTALS", "", "", "", "",
+      payments.reduce((s, p) => s + p.amount, 0),
+      payments.reduce((s, p) => s + p.principal, 0),
+      payments.reduce((s, p) => s + p.interest, 0),
+      payments.reduce((s, p) => s + ((p as any).managementFee ?? 0), 0),
+      payments.reduce((s, p) => s + ((p as any).processingFee ?? 0), 0),
+      payments.reduce((s, p) => s + p.penalty, 0),
+      "", "",
+    ];
+    XLSXStyle.utils.sheet_add_aoa(ws, [totRow], { origin: -1 });
+    const totRowIndex = dataRows.length + 5;
+    cols.forEach((col, ci) => {
+      const cell = ws[`${col}${totRowIndex}`];
+      if (!cell) return;
+      cell.s = {
+        font: { bold: true, sz: 10, name: "Calibri", color: { rgb: ci >= 5 && ci <= 10 ? "166534" : "111827" } },
+        fill: { fgColor: { rgb: "F0FDF4" } },
+        alignment: { horizontal: ci >= 5 ? "right" : "left", vertical: "center" },
+        border: { ...allBorder, top: { style: "medium", color: { rgb: "16A34A" } } },
+      };
+    });
+
+    const wb = XLSXStyle.utils.book_new();
+    XLSXStyle.utils.book_append_sheet(wb, ws, "Payments");
+    XLSXStyle.writeFile(wb, `Payments-Export-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
   const summaryCards = [
     { label: "Total Collected", value: formatCurrency(totalCollected), icon: <DollarSign className="w-5 h-5" />, border: "border-l-emerald-500", iconBg: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" },
     { label: "Principal Collected", value: formatCurrency(totalPrincipal), icon: <TrendingDown className="w-5 h-5" />, border: "border-l-green-500", iconBg: "bg-green-500/15 text-green-600 dark:text-green-400" },
@@ -279,9 +382,19 @@ export default function PaymentsPage() {
 
       {/* Table */}
       <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-800 flex items-center gap-2">
-          <ArrowDownUp className="w-4 h-4 text-gray-400" />
-          <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{payments.length} payment{payments.length !== 1 ? "s" : ""}</p>
+        <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <ArrowDownUp className="w-4 h-4 text-gray-400" />
+            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{payments.length} payment{payments.length !== 1 ? "s" : ""}</p>
+          </div>
+          {payments.length > 0 && (
+            <button
+              onClick={handleExport}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-green-600 text-xs font-medium text-green-700 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" /> Export Excel
+            </button>
+          )}
         </div>
 
         {loading ? (

@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Search, FileText, Loader2, AlertTriangle, CheckCircle2, Clock, Banknote, ChevronDown, Upload, Trash2, Eye, UploadCloud } from "lucide-react";
+import { Plus, Search, FileText, Loader2, AlertTriangle, CheckCircle2, Clock, Banknote, ChevronDown, Upload, Trash2, Eye, UploadCloud, Download } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -121,6 +121,120 @@ export default function LoansPage() {
   const displayed = classFilter === "All Classes"
     ? loans
     : loans.filter((l) => l.loanClass === classFilter);
+
+  const handleExport = async () => {
+    const XLSXStyle = (await import("xlsx-js-style")).default;
+    const companyName = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}").companyName ?? "Company" : "Company";
+    const today = new Date().toLocaleDateString("en-GB");
+
+    const headerRow = [
+      "No.", "Loan ID", "Customer", "Purpose", "Economic Sector",
+      "Loan Amount (RWF)", "Disbursed (RWF)", "Outstanding (RWF)",
+      "Total Repayable (RWF)", "Total Paid (RWF)",
+      "Interest Rate (%/mo)", "Mgmt Fee (%/mo)", "Proc Fee (%/mo)", "Method", "Installments", "Paid",
+      "Status", "Class", "Days Overdue",
+      "Disbursement Date", "Maturity Date", "Next Payment Date",
+    ];
+
+    const dataRows = displayed.map((l, i) => {
+      const totalPaid = l.amountRepaidPrincipal + l.amountRepaidInterest +
+        (l.amountRepaidMgmtFee ?? 0) + (l.amountRepaidProcessingFee ?? 0) + (l.penaltyPaid ?? 0);
+      return [
+        i + 1,
+        l.id.toUpperCase(),
+        l.customerName ?? "",
+        l.purpose,
+        (l as any).economicSector ?? "",
+        l.amount,
+        l.disbursedAmount,
+        l.balanceOutstanding,
+        l.totalRepayable,
+        totalPaid,
+        Number(l.annualInterestRate) / 12,
+        Number(l.managementFeeRate) / 12,
+        Number((l as any).processingFeeRate ?? 0) / 12,
+        l.interestMethod === "flat" ? "Flat" : "Declining",
+        l.totalInstallments,
+        l.installmentsPaid,
+        l.status,
+        l.loanClass,
+        l.daysOverdue,
+        l.disbursementDate ? new Date(l.disbursementDate).toLocaleDateString("en-GB") : "",
+        l.agreedMaturityDate ? new Date(l.agreedMaturityDate).toLocaleDateString("en-GB") : "",
+        l.nextPaymentDate ? new Date(l.nextPaymentDate).toLocaleDateString("en-GB") : "",
+      ];
+    });
+
+    const titleRow = [`${companyName} — Loan Portfolio Export`, ...Array(21).fill("")];
+    const dateRow  = [`Generated: ${today}  ·  ${displayed.length} loans`, ...Array(21).fill("")];
+    const blankRow = Array(22).fill("");
+
+    const wsData = [titleRow, dateRow, blankRow, headerRow, ...dataRows];
+    const ws = XLSXStyle.utils.aoa_to_sheet(wsData);
+
+    ws["!cols"] = [
+      { wch: 5 }, { wch: 14 }, { wch: 24 }, { wch: 22 }, { wch: 28 },
+      { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 20 }, { wch: 16 },
+      { wch: 16 }, { wch: 16 }, { wch: 14 }, { wch: 12 }, { wch: 13 }, { wch: 8 },
+      { wch: 13 }, { wch: 14 }, { wch: 13 },
+      { wch: 16 }, { wch: 14 }, { wch: 16 },
+    ];
+    ws["!merges"] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 21 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 21 } },
+    ];
+
+    const GREEN = "166534"; const WHITE = "FFFFFF"; const LGRAY = "F3F4F6";
+    const BORDER = { style: "thin", color: { rgb: "D1D5DB" } };
+    const allBorder = { top: BORDER, bottom: BORDER, left: BORDER, right: BORDER };
+    const cols = ["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V"];
+
+    const titleCell = ws["A1"];
+    if (titleCell) titleCell.s = { font: { bold: true, sz: 16, color: { rgb: WHITE }, name: "Calibri" }, fill: { fgColor: { rgb: GREEN } }, alignment: { horizontal: "center", vertical: "center" } };
+    const dateCell = ws["A2"];
+    if (dateCell) dateCell.s = { font: { sz: 11, color: { rgb: "6B7280" }, name: "Calibri" }, fill: { fgColor: { rgb: "F9FAFB" } }, alignment: { horizontal: "center" } };
+
+    cols.forEach((col) => {
+      const cell = ws[`${col}4`];
+      if (cell) cell.s = { font: { bold: true, sz: 10, color: { rgb: WHITE }, name: "Calibri" }, fill: { fgColor: { rgb: GREEN } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border: allBorder };
+    });
+
+    const statusColors: Record<string, string> = {
+      active: "166534", overdue: "DC2626", pending: "D97706", completed: "6B7280",
+      approved: "1D4ED8", written_off: "374151", rejected: "9CA3AF",
+    };
+
+    dataRows.forEach((row, ri) => {
+      const rowIndex = ri + 5;
+      const isAlt = ri % 2 === 1;
+      cols.forEach((col, ci) => {
+        const addr = `${col}${rowIndex}`;
+        const cell = ws[addr];
+        if (!cell) return;
+        cell.s = {
+          font: { sz: 10, name: "Calibri" },
+          fill: { fgColor: { rgb: isAlt ? LGRAY : WHITE } },
+          alignment: { horizontal: [0,12,13,16].includes(ci) ? "center" : [5,6,7,8,9].includes(ci) ? "right" : "left", vertical: "center" },
+          border: allBorder,
+        };
+        // Status cell coloring
+        if (ci === 14) {
+          const sc = statusColors[String(row[ci])] ?? "374151";
+          cell.s.font = { ...cell.s.font, bold: true, color: { rgb: sc } };
+        }
+        // Overdue days in red
+        if (ci === 16 && Number(row[ci]) > 0) cell.s.font = { ...cell.s.font, bold: true, color: { rgb: "DC2626" } };
+        // Outstanding in red
+        if (ci === 7 && Number(row[ci]) > 0) cell.s.font = { ...cell.s.font, bold: true, color: { rgb: "DC2626" } };
+      });
+    });
+
+    ws["!rows"] = [{ hpt: 36 }, { hpt: 20 }, { hpt: 8 }, { hpt: 24 }, ...dataRows.map(() => ({ hpt: 18 }))];
+
+    const wb = XLSXStyle.utils.book_new();
+    XLSXStyle.utils.book_append_sheet(wb, ws, "Loans");
+    XLSXStyle.writeFile(wb, `Loans-Export-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
 
   // Derived summary from loaded data
   const activeLoans    = loans.filter((l) => l.status === "active");
@@ -271,6 +385,14 @@ export default function LoansPage() {
             {tab !== "all" && <span className="text-gray-400 font-normal"> · {STATUS_LABELS[tab as LoanStatus]}</span>}
             {classFilter !== "All Classes" && <span className="text-gray-400 font-normal"> · {classFilter}</span>}
           </p>
+          {displayed.length > 0 && (
+            <button
+              onClick={handleExport}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-green-600 text-xs font-medium text-green-700 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" /> Export Excel
+            </button>
+          )}
         </div>
 
         {loading ? (

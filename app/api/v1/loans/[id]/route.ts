@@ -172,7 +172,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     }
 
     if (body.status === "written_off") {
-      updateData.writtenOffDate = new Date();
+      updateData.writtenOffDate   = new Date();
+      updateData.provisioningRate = 0;
+      updateData.provisionRequired = 0;
     }
 
     if (body.isRestructured !== undefined) {

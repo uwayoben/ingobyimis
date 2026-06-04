@@ -88,10 +88,10 @@ function buildSchedule(
 }
 
 export default function LoanCalculatorPage() {
-  const [principal,   setPrincipal]   = useState(1_000_000);
-  const [monthlyRate, setMonthlyRate] = useState("5");
-  const [method,      setMethod]      = useState<"flat" | "declining">("declining");
-  const [installments, setInstallments] = useState(12);
+  const [principal,    setPrincipal]    = useState("1000000");
+  const [monthlyRate,  setMonthlyRate]  = useState("5");
+  const [method,       setMethod]       = useState<"flat" | "declining">("declining");
+  const [installments, setInstallments] = useState("12");
   const [freqKey,     setFreqKey]     = useState("30");
   const [startDate,   setStartDate]   = useState(() => {
     const d = new Date();
@@ -99,11 +99,13 @@ export default function LoanCalculatorPage() {
     return d.toISOString().slice(0, 10);
   });
 
-  const freq      = FREQ_OPTIONS.find((o) => o.value === freqKey)!;
-  const annualRate = (parseFloat(monthlyRate) || 0) * 12;
-  const schedule  = useMemo(
-    () => buildSchedule(principal, annualRate, method, installments, freq.days, startDate),
-    [principal, annualRate, method, installments, freq.days, startDate],
+  const freq           = FREQ_OPTIONS.find((o) => o.value === freqKey)!;
+  const principalNum   = Math.max(0, Number(principal)    || 0);
+  const installmentsNum = Math.max(1, Number(installments) || 1);
+  const annualRate     = (parseFloat(monthlyRate) || 0) * 12;
+  const schedule       = useMemo(
+    () => buildSchedule(principalNum, annualRate, method, installmentsNum, freq.days, startDate),
+    [principalNum, annualRate, method, installmentsNum, freq.days, startDate],
   );
 
   const totalInterest  = schedule.reduce((s, r) => s + r.interest, 0);
@@ -111,10 +113,10 @@ export default function LoanCalculatorPage() {
   const emi            = schedule[0]?.emi ?? 0;
 
   const handleReset = () => {
-    setPrincipal(1_000_000);
+    setPrincipal("1000000");
     setMonthlyRate("5");
     setMethod("declining");
-    setInstallments(12);
+    setInstallments("12");
     setFreqKey("30");
     const d = new Date(); d.setMonth(d.getMonth() + 1);
     setStartDate(d.toISOString().slice(0, 10));
@@ -147,9 +149,9 @@ export default function LoanCalculatorPage() {
       </style></head>
       <body>
         <h2>Loan Amortisation Schedule</h2>
-        <p>Principal: RWF ${principal.toLocaleString()} &nbsp;·&nbsp; Rate: ${monthlyRate}% / month (${annualRate}% p.a.) &nbsp;·&nbsp; Method: ${method === "flat" ? "Flat Rate" : "Declining Balance"} &nbsp;·&nbsp; ${installments} ${freq.label} installments</p>
+        <p>Principal: RWF ${principalNum.toLocaleString()} &nbsp;·&nbsp; Rate: ${monthlyRate}% / month (${annualRate}% p.a.) &nbsp;·&nbsp; Method: ${method === "flat" ? "Flat Rate" : "Declining Balance"} &nbsp;·&nbsp; ${installmentsNum} ${freq.label} installments</p>
         <div class="summary">
-          <div class="kpi"><p>Principal</p><strong>RWF ${principal.toLocaleString()}</strong></div>
+          <div class="kpi"><p>Principal</p><strong>RWF ${principalNum.toLocaleString()}</strong></div>
           <div class="kpi"><p>EMI / Installment</p><strong>RWF ${emi.toLocaleString()}</strong></div>
           <div class="kpi"><p>Total Interest</p><strong>RWF ${totalInterest.toLocaleString()}</strong></div>
           <div class="kpi"><p>Total Repayable</p><strong>RWF ${totalRepayable.toLocaleString()}</strong></div>
@@ -215,7 +217,7 @@ export default function LoanCalculatorPage() {
                   type="number"
                   min="1"
                   value={principal}
-                  onChange={(e) => setPrincipal(Number(e.target.value))}
+                  onChange={(e) => setPrincipal(e.target.value)}
                 />
                 <Input
                   label="Interest Rate (% / month)"
@@ -241,7 +243,7 @@ export default function LoanCalculatorPage() {
                   type="number"
                   min="1"
                   value={installments}
-                  onChange={(e) => setInstallments(Math.max(1, Number(e.target.value)))}
+                  onChange={(e) => setInstallments(e.target.value)}
                 />
                 <Select
                   label="Repayment Frequency"
@@ -270,11 +272,11 @@ export default function LoanCalculatorPage() {
               {schedule.length > 0 ? (
                 <>
                   {[
-                    { label: "Principal",           value: fmt(principal),       bold: false },
+                    { label: "Principal",           value: fmt(principalNum),       bold: false },
                     { label: "Annual Rate (equiv)",  value: `${annualRate}% p.a.`, bold: false },
                     { label: "Interest Method",      value: method === "flat" ? "Flat Rate" : "Declining Balance", bold: false },
                     { label: "Frequency",            value: freq.label,           bold: false },
-                    { label: "No. of Installments",  value: String(installments), bold: false },
+                    { label: "No. of Installments",  value: String(installmentsNum), bold: false },
                     { label: "EMI / Installment",    value: fmt(emi),             bold: true },
                     { label: "Total Interest",       value: fmt(totalInterest),   bold: false },
                     { label: "Total Repayable",      value: fmt(totalRepayable),  bold: true },
@@ -288,7 +290,7 @@ export default function LoanCalculatorPage() {
                   ))}
                   <div className="mt-3 p-3 rounded-xl bg-green-50 dark:bg-green-900/20 text-center">
                     <p className="text-xs font-semibold text-green-700 dark:text-green-400">
-                      {installments} × {fmt(emi)}
+                      {installmentsNum} × {fmt(emi)}
                     </p>
                     <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">{freq.label} installments</p>
                   </div>

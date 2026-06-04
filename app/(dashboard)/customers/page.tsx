@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Search, Filter, User, Users, TrendingUp, CreditCard, UserCheck, Loader2, Upload, Trash2, AlertTriangle } from "lucide-react";
+import { Plus, Search, User, Users, TrendingUp, CreditCard, UserCheck, Loader2, Upload, Trash2, AlertTriangle, Download } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -68,6 +68,136 @@ export default function CustomersPage() {
     if (filter === "none") return (c.activeLoans ?? 0) === 0;
     return true;
   });
+
+  const handleExport = async () => {
+    const XLSXStyle = (await import("xlsx-js-style")).default;
+    const companyName = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}").companyName ?? "Company" : "Company";
+    const today = new Date().toLocaleDateString("en-GB");
+
+    // ── Header rows ──────────────────────────────────────────────────────────
+    const titleRow  = [`${companyName} — Customer Export`, "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""];
+    const dateRow   = [`Generated: ${today}  ·  ${filtered.length} customers`, "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""];
+    const blankRow  = Array(16).fill("");
+    const headerRow = [
+      "No.", "Full Name", "National ID", "Date of Birth", "Gender", "Marital Status",
+      "Province", "District", "Sector", "Cell", "Village",
+      "Phone", "Email", "Employment Status", "Employer",
+      "Total Loans", "Active Loans", "Outstanding (RWF)",
+    ];
+
+    const dataRows = filtered.map((c, i) => [
+      i + 1,
+      c.names,
+      c.nationalId,
+      c.dateOfBirth ? new Date(c.dateOfBirth).toLocaleDateString("en-GB") : "",
+      c.gender,
+      c.maritalStatus,
+      c.province,
+      c.district,
+      c.sector,
+      c.cell,
+      c.village,
+      c.phone,
+      c.email ?? "",
+      c.employmentStatus,
+      c.employerName ?? "",
+      c.totalLoans ?? 0,
+      c.activeLoans ?? 0,
+      c.outstandingBalance ?? 0,
+    ]);
+
+    const wsData = [titleRow, dateRow, blankRow, headerRow, ...dataRows];
+    const ws = XLSXStyle.utils.aoa_to_sheet(wsData);
+
+    // Column widths
+    ws["!cols"] = [
+      { wch: 5 }, { wch: 28 }, { wch: 18 }, { wch: 14 }, { wch: 10 }, { wch: 16 },
+      { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 12 },
+      { wch: 16 }, { wch: 24 }, { wch: 18 }, { wch: 22 },
+      { wch: 13 }, { wch: 13 }, { wch: 18 },
+    ];
+
+    // Merge title across all columns
+    ws["!merges"] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 17 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 17 } },
+    ];
+
+    // Style helpers
+    const GREEN  = "166534";
+    const WHITE  = "FFFFFF";
+    const LGRAY  = "F3F4F6";
+    const BORDER = { style: "thin", color: { rgb: "D1D5DB" } };
+    const allBorder = { top: BORDER, bottom: BORDER, left: BORDER, right: BORDER };
+
+    // Title style
+    const titleCell = ws["A1"];
+    if (titleCell) titleCell.s = {
+      font:      { bold: true, sz: 16, color: { rgb: WHITE }, name: "Calibri" },
+      fill:      { fgColor: { rgb: GREEN } },
+      alignment: { horizontal: "center", vertical: "center" },
+    };
+    // Date style
+    const dateCell = ws["A2"];
+    if (dateCell) dateCell.s = {
+      font:      { sz: 11, color: { rgb: "6B7280" }, name: "Calibri" },
+      fill:      { fgColor: { rgb: "F9FAFB" } },
+      alignment: { horizontal: "center" },
+    };
+
+    // Header row (row index 3 = 0-based)
+    const colLetters = ["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R"];
+    colLetters.forEach((col) => {
+      const cell = ws[`${col}4`];
+      if (cell) cell.s = {
+        font:      { bold: true, sz: 11, color: { rgb: WHITE }, name: "Calibri" },
+        fill:      { fgColor: { rgb: GREEN } },
+        alignment: { horizontal: "center", vertical: "center", wrapText: true },
+        border:    allBorder,
+      };
+    });
+
+    // Data rows
+    dataRows.forEach((row, ri) => {
+      const rowIndex = ri + 5; // 1-based: rows 1-4 are title/date/blank/header
+      const isAlt = ri % 2 === 1;
+      colLetters.forEach((col, ci) => {
+        const addr = `${col}${rowIndex}`;
+        const cell = ws[addr];
+        if (!cell) return;
+        cell.s = {
+          font:      { sz: 10, name: "Calibri" },
+          fill:      { fgColor: { rgb: isAlt ? LGRAY : WHITE } },
+          alignment: {
+            horizontal: ci === 0 || ci >= 15 ? "center" : "left",
+            vertical: "center",
+          },
+          border: allBorder,
+        };
+        // Highlight active loans in green
+        if (ci === 16 && Number(row[ci]) > 0) {
+          cell.s.font = { ...cell.s.font, bold: true, color: { rgb: "166534" } };
+        }
+        // Outstanding in red if > 0
+        if (ci === 17 && Number(row[ci]) > 0) {
+          cell.s.font = { ...cell.s.font, bold: true, color: { rgb: "DC2626" } };
+        }
+      });
+    });
+
+    // Row heights
+    ws["!rows"] = [
+      { hpt: 36 }, // title
+      { hpt: 20 }, // date
+      { hpt: 8  }, // blank
+      { hpt: 22 }, // header
+      ...dataRows.map(() => ({ hpt: 18 })),
+    ];
+
+    const wb = XLSXStyle.utils.book_new();
+    XLSXStyle.utils.book_append_sheet(wb, ws, "Customers");
+    XLSXStyle.writeFile(wb, `Customers-Export-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
@@ -219,7 +349,14 @@ export default function CustomersPage() {
           <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
             {loading ? "Loading…" : `${filtered.length} customer${filtered.length !== 1 ? "s" : ""}`}
           </p>
-          <Button variant="outline" size="sm" icon={<Filter className="w-3.5 h-3.5" />}>Export</Button>
+          <Button
+            variant="outline" size="sm"
+            icon={<Download className="w-3.5 h-3.5" />}
+            onClick={handleExport}
+            disabled={filtered.length === 0}
+          >
+            Export Excel
+          </Button>
         </div>
 
         {loading ? (

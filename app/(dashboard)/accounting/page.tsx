@@ -701,7 +701,87 @@ export default function AccountingPage() {
           </div>
 
           <Card>
-            <CardHeader><CardTitle>Expense Records</CardTitle></CardHeader>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle>Expense Records</CardTitle>
+                {expenses.length > 0 && (
+                  <button
+                    onClick={async () => {
+                      const XLSXStyle = (await import("xlsx-js-style")).default;
+                      const companyName = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}").companyName ?? "Company" : "Company";
+                      const today = new Date().toLocaleDateString("en-GB");
+                      const headerRow = ["No.", "Date", "Category", "Description", "Amount (RWF)", "Status"];
+                      const dataRows = expenses.map((e, i) => [
+                        i + 1,
+                        new Date(e.date).toLocaleDateString("en-GB"),
+                        e.category,
+                        e.description,
+                        e.amount,
+                        e.isPaid ? "Paid" : "Unpaid",
+                      ]);
+                      const totalPaid   = expenses.filter((e) => e.isPaid).reduce((s, e) => s + e.amount, 0);
+                      const totalUnpaid = expenses.filter((e) => !e.isPaid).reduce((s, e) => s + e.amount, 0);
+                      const totalAll    = expenses.reduce((s, e) => s + e.amount, 0);
+                      const titleRow = [`${companyName} — Expense Records Export`, "", "", "", "", ""];
+                      const dateRow  = [`Generated: ${today}  ·  ${expenses.length} records`, "", "", "", "", ""];
+                      const wsData = [titleRow, dateRow, ["","","","","",""], headerRow, ...dataRows];
+                      const ws = XLSXStyle.utils.aoa_to_sheet(wsData);
+                      ws["!cols"] = [{ wch: 5 }, { wch: 13 }, { wch: 22 }, { wch: 38 }, { wch: 20 }, { wch: 10 }];
+                      ws["!merges"] = [
+                        { s: { r: 0, c: 0 }, e: { r: 0, c: 5 } },
+                        { s: { r: 1, c: 0 }, e: { r: 1, c: 5 } },
+                      ];
+                      const GREEN = "166534"; const WHITE = "FFFFFF"; const LGRAY = "F3F4F6";
+                      const BORDER = { style: "thin", color: { rgb: "D1D5DB" } };
+                      const allBorder = { top: BORDER, bottom: BORDER, left: BORDER, right: BORDER };
+                      const cols = ["A","B","C","D","E","F"];
+                      const t1 = ws["A1"]; if (t1) t1.s = { font: { bold: true, sz: 16, color: { rgb: WHITE }, name: "Calibri" }, fill: { fgColor: { rgb: GREEN } }, alignment: { horizontal: "center" } };
+                      const t2 = ws["A2"]; if (t2) t2.s = { font: { sz: 11, color: { rgb: "6B7280" }, name: "Calibri" }, fill: { fgColor: { rgb: "F9FAFB" } }, alignment: { horizontal: "center" } };
+                      cols.forEach((col) => {
+                        const cell = ws[`${col}4`];
+                        if (cell) cell.s = { font: { bold: true, sz: 10, color: { rgb: WHITE }, name: "Calibri" }, fill: { fgColor: { rgb: GREEN } }, alignment: { horizontal: "center", vertical: "center" }, border: allBorder };
+                      });
+                      dataRows.forEach((row, ri) => {
+                        const rowIndex = ri + 5;
+                        const isAlt = ri % 2 === 1;
+                        const isPaid = row[5] === "Paid";
+                        cols.forEach((col, ci) => {
+                          const cell = ws[`${col}${rowIndex}`];
+                          if (!cell) return;
+                          cell.s = {
+                            font: { sz: 10, name: "Calibri" },
+                            fill: { fgColor: { rgb: isAlt ? LGRAY : WHITE } },
+                            alignment: { horizontal: [0, 4].includes(ci) ? "right" : "left", vertical: "center" },
+                            border: allBorder,
+                          };
+                          if (ci === 4) cell.s.font = { ...cell.s.font, bold: true, color: { rgb: "DC2626" } };
+                          if (ci === 5) cell.s.font = { ...cell.s.font, bold: true, color: { rgb: isPaid ? "166534" : "D97706" } };
+                        });
+                      });
+                      // Totals
+                      const totals = [["TOTALS", "", "", "Paid", totalPaid, ""], ["", "", "", "Unpaid", totalUnpaid, ""], ["", "", "", "Total", totalAll, ""]];
+                      XLSXStyle.utils.sheet_add_aoa(ws, totals, { origin: -1 });
+                      const startTot = dataRows.length + 5;
+                      [[totalPaid, "166534"], [totalUnpaid, "D97706"], [totalAll, "111827"]].forEach(([amt, color], ti) => {
+                        const ri = startTot + ti;
+                        ["A","B","C","D","E","F"].forEach((col, ci) => {
+                          const cell = ws[`${col}${ri}`];
+                          if (!cell) return;
+                          cell.s = { font: { bold: true, sz: 10, name: "Calibri", color: { rgb: ci === 4 ? String(color) : "111827" } }, fill: { fgColor: { rgb: "F0FDF4" } }, alignment: { horizontal: ci === 4 ? "right" : "left" }, border: { ...allBorder, ...(ti === 0 ? { top: { style: "medium" as const, color: { rgb: "16A34A" } } } : {}) } };
+                        });
+                      });
+                      ws["!rows"] = [{ hpt: 36 }, { hpt: 20 }, { hpt: 8 }, { hpt: 22 }, ...dataRows.map(() => ({ hpt: 18 }))];
+                      const wb = XLSXStyle.utils.book_new();
+                      XLSXStyle.utils.book_append_sheet(wb, ws, "Expenses");
+                      XLSXStyle.writeFile(wb, `Expenses-Export-${new Date().toISOString().slice(0, 10)}.xlsx`);
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-green-600 text-xs font-medium text-green-700 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+                  >
+                    <ArrowDownToLine className="w-3.5 h-3.5" /> Export Excel
+                  </button>
+                )}
+              </div>
+            </CardHeader>
             <div className="overflow-x-auto">
               {loadingExpenses ? (
                 <div className="px-6 py-10 text-center text-sm text-gray-400">Loading…</div>
@@ -873,7 +953,86 @@ export default function AccountingPage() {
       {tab === "ledger" && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-5">
           <Card>
-            <CardHeader><CardTitle>Account Ledger</CardTitle></CardHeader>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle>Account Ledger</CardTitle>
+                {ledgerEntries.length > 0 && (
+                  <button
+                    onClick={async () => {
+                      const XLSXStyle = (await import("xlsx-js-style")).default;
+                      const companyName = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}").companyName ?? "Company" : "Company";
+                      const today = new Date().toLocaleDateString("en-GB");
+                      const typeLabels: Record<string, string> = {
+                        deposit: "Deposit", withdrawal: "Withdrawal",
+                        disbursement: "Loan Disbursement", repayment: "Repayment", expense: "Expense Paid",
+                      };
+                      const headerRow = ["No.", "Date & Time", "Type", "Description", "Reference", "Credit (RWF)", "Debit (RWF)", "Balance Before (RWF)", "Balance After (RWF)"];
+                      const dataRows = ledgerEntries.map((e, i) => {
+                        const isCredit = e.type === "deposit" || e.type === "repayment";
+                        return [
+                          i + 1,
+                          new Date(e.createdAt).toLocaleString("en-GB"),
+                          typeLabels[e.type] ?? e.type,
+                          e.description,
+                          e.referenceId ?? "",
+                          isCredit ? e.amount : "",
+                          isCredit ? "" : e.amount,
+                          e.balanceBefore,
+                          e.balanceAfter,
+                        ];
+                      });
+                      const titleRow = [`${companyName} — Account Ledger Export`, ...Array(8).fill("")];
+                      const dateRow  = [`Generated: ${today}  ·  ${ledgerEntries.length} transactions`, ...Array(8).fill("")];
+                      const wsData = [titleRow, dateRow, Array(9).fill(""), headerRow, ...dataRows];
+                      const ws = XLSXStyle.utils.aoa_to_sheet(wsData);
+                      ws["!cols"] = [{ wch: 5 }, { wch: 20 }, { wch: 18 }, { wch: 36 }, { wch: 18 }, { wch: 20 }, { wch: 20 }, { wch: 22 }, { wch: 22 }];
+                      ws["!merges"] = [
+                        { s: { r: 0, c: 0 }, e: { r: 0, c: 8 } },
+                        { s: { r: 1, c: 0 }, e: { r: 1, c: 8 } },
+                      ];
+                      const GREEN = "166534"; const WHITE = "FFFFFF"; const LGRAY = "F3F4F6";
+                      const BORDER = { style: "thin", color: { rgb: "D1D5DB" } };
+                      const allBorder = { top: BORDER, bottom: BORDER, left: BORDER, right: BORDER };
+                      const cols = ["A","B","C","D","E","F","G","H","I"];
+                      const t1 = ws["A1"]; if (t1) t1.s = { font: { bold: true, sz: 16, color: { rgb: WHITE }, name: "Calibri" }, fill: { fgColor: { rgb: GREEN } }, alignment: { horizontal: "center" } };
+                      const t2 = ws["A2"]; if (t2) t2.s = { font: { sz: 11, color: { rgb: "6B7280" }, name: "Calibri" }, fill: { fgColor: { rgb: "F9FAFB" } }, alignment: { horizontal: "center" } };
+                      cols.forEach((col) => {
+                        const cell = ws[`${col}4`];
+                        if (cell) cell.s = { font: { bold: true, sz: 10, color: { rgb: WHITE }, name: "Calibri" }, fill: { fgColor: { rgb: GREEN } }, alignment: { horizontal: "center", vertical: "center" }, border: allBorder };
+                      });
+                      dataRows.forEach((row, ri) => {
+                        const rowIndex = ri + 5;
+                        const isAlt = ri % 2 === 1;
+                        const isCredit = ["Deposit","Repayment"].includes(String(row[2]));
+                        cols.forEach((col, ci) => {
+                          const cell = ws[`${col}${rowIndex}`];
+                          if (!cell) return;
+                          cell.s = {
+                            font: { sz: 10, name: "Calibri" },
+                            fill: { fgColor: { rgb: isAlt ? LGRAY : WHITE } },
+                            alignment: { horizontal: [0,5,6,7,8].includes(ci) ? "right" : "left", vertical: "center" },
+                            border: allBorder,
+                          };
+                          // Type label coloring
+                          if (ci === 2) cell.s.font = { ...cell.s.font, bold: true, color: { rgb: isCredit ? "166534" : "DC2626" } };
+                          // Credit column green
+                          if (ci === 5 && row[5] !== "") cell.s.font = { ...cell.s.font, bold: true, color: { rgb: "166534" } };
+                          // Debit column red
+                          if (ci === 6 && row[6] !== "") cell.s.font = { ...cell.s.font, bold: true, color: { rgb: "DC2626" } };
+                        });
+                      });
+                      ws["!rows"] = [{ hpt: 36 }, { hpt: 20 }, { hpt: 8 }, { hpt: 22 }, ...dataRows.map(() => ({ hpt: 18 }))];
+                      const wb = XLSXStyle.utils.book_new();
+                      XLSXStyle.utils.book_append_sheet(wb, ws, "Ledger");
+                      XLSXStyle.writeFile(wb, `Ledger-Export-${new Date().toISOString().slice(0, 10)}.xlsx`);
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-green-600 text-xs font-medium text-green-700 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+                  >
+                    <ArrowDownToLine className="w-3.5 h-3.5" /> Export Excel
+                  </button>
+                )}
+              </div>
+            </CardHeader>
             <div className="overflow-x-auto">
               {loadingLedger ? (
                 <div className="px-6 py-10 text-center text-sm text-gray-400">Loading…</div>

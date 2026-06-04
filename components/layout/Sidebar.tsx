@@ -30,7 +30,7 @@ const ALL_NAV_ITEMS = [
     items: [
       { href: "/customers",       label: "Customers",       icon: Users,          roles: ["super_admin", "managing_director", "loan_officer", "receptionist"] },
       { href: "/loans",           label: "Loans",           icon: FileText,       roles: ["super_admin", "managing_director", "loan_officer", "receptionist"] },
-      { href: "/loan-calculator", label: "Loan Calculator", icon: Calculator,     roles: ["managing_director", "loan_officer"] },
+      { href: "/loan-calculator", label: "Loan Calculator", icon: Calculator,     roles: ["managing_director", "loan_officer", "receptionist"] },
       { href: "/payments",        label: "Payments",        icon: CreditCard,     roles: ["managing_director", "loan_officer"] },
       { href: "/penalties",       label: "Penalties",       icon: AlertTriangle,  roles: ["managing_director", "loan_officer"] },
     ],
