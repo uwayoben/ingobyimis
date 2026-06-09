@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Plus, TrendingDown, Package, DollarSign, BarChart3, Trash2,
   CheckCircle2, Clock, Paperclip, ExternalLink, Upload, X, FileText,
-  Landmark, ArrowDownToLine, ArrowUpToLine, ArrowRightLeft,
+  Landmark, ArrowDownToLine, ArrowUpToLine, ArrowRightLeft, ChevronDown,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { Card, CardHeader, CardTitle } from "@/components/ui/Card";
@@ -510,9 +510,10 @@ export default function AccountingPage() {
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const [showAssetModal,   setShowAssetModal]   = useState(false);
   const [showDepositModal, setShowDepositModal] = useState(false);
-  const [deletingId,       setDeletingId]       = useState<string | null>(null);
-  const [deletingAssetId,  setDeletingAssetId]  = useState<string | null>(null);
-  const [markPaidExpense,  setMarkPaidExpense]  = useState<Expense | null>(null);
+  const [deletingId,         setDeletingId]         = useState<string | null>(null);
+  const [deletingAssetId,    setDeletingAssetId]    = useState<string | null>(null);
+  const [markPaidExpense,    setMarkPaidExpense]    = useState<Expense | null>(null);
+  const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
 
   const isReceptionist    = role === "receptionist";
   const canManageExpenses = ["managing_director", "loan_officer", "receptionist"].includes(role);
@@ -577,6 +578,75 @@ export default function AccountingPage() {
   const totalExpenses  = expenses.reduce((s, e) => s + e.amount, 0);
   const totalPaid      = paidExpenses.reduce((s, e) => s + e.amount, 0);
   const totalUnpaid    = unpaidExpenses.reduce((s, e) => s + e.amount, 0);
+
+  const handleExportExpenses = async (categoryFilter: string | null) => {
+    const XLSXStyle = (await import("xlsx-js-style")).default;
+    const companyName = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}").companyName ?? "Company" : "Company";
+    const today = new Date().toLocaleDateString("en-GB");
+    const rows = categoryFilter ? expenses.filter((e) => e.category === categoryFilter) : expenses;
+    const label = categoryFilter ?? "All Categories";
+    const headerRow = ["No.", "Date", "Category", "Description", "Amount (RWF)", "Status"];
+    const dataRows = rows.map((e, i) => [
+      i + 1,
+      new Date(e.date).toLocaleDateString("en-GB"),
+      e.category,
+      e.description,
+      e.amount,
+      e.isPaid ? "Paid" : "Unpaid",
+    ]);
+    const tPaid   = rows.filter((e) => e.isPaid).reduce((s, e) => s + e.amount, 0);
+    const tUnpaid = rows.filter((e) => !e.isPaid).reduce((s, e) => s + e.amount, 0);
+    const tAll    = rows.reduce((s, e) => s + e.amount, 0);
+    const titleRow = [`${companyName} — Expenses: ${label}`, "", "", "", "", ""];
+    const dateRow  = [`Generated: ${today}  ·  ${rows.length} records`, "", "", "", "", ""];
+    const wsData = [titleRow, dateRow, ["","","","","",""], headerRow, ...dataRows];
+    const ws = XLSXStyle.utils.aoa_to_sheet(wsData);
+    ws["!cols"] = [{ wch: 5 }, { wch: 13 }, { wch: 22 }, { wch: 38 }, { wch: 20 }, { wch: 10 }];
+    ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 5 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: 5 } }];
+    const GREEN = "166534"; const WHITE = "FFFFFF"; const LGRAY = "F3F4F6";
+    const BORDER = { style: "thin", color: { rgb: "D1D5DB" } };
+    const allBorder = { top: BORDER, bottom: BORDER, left: BORDER, right: BORDER };
+    const cols = ["A","B","C","D","E","F"];
+    const t1 = ws["A1"]; if (t1) t1.s = { font: { bold: true, sz: 16, color: { rgb: WHITE }, name: "Calibri" }, fill: { fgColor: { rgb: GREEN } }, alignment: { horizontal: "center" } };
+    const t2 = ws["A2"]; if (t2) t2.s = { font: { sz: 11, color: { rgb: "6B7280" }, name: "Calibri" }, fill: { fgColor: { rgb: "F9FAFB" } }, alignment: { horizontal: "center" } };
+    cols.forEach((col) => {
+      const cell = ws[`${col}4`];
+      if (cell) cell.s = { font: { bold: true, sz: 10, color: { rgb: WHITE }, name: "Calibri" }, fill: { fgColor: { rgb: GREEN } }, alignment: { horizontal: "center", vertical: "center" }, border: allBorder };
+    });
+    dataRows.forEach((row, ri) => {
+      const rowIndex = ri + 5;
+      const isAlt = ri % 2 === 1;
+      const isPaid = row[5] === "Paid";
+      cols.forEach((col, ci) => {
+        const cell = ws[`${col}${rowIndex}`];
+        if (!cell) return;
+        cell.s = {
+          font: { sz: 10, name: "Calibri" },
+          fill: { fgColor: { rgb: isAlt ? LGRAY : WHITE } },
+          alignment: { horizontal: [0, 4].includes(ci) ? "right" : "left", vertical: "center" },
+          border: allBorder,
+        };
+        if (ci === 4) cell.s.font = { ...cell.s.font, bold: true, color: { rgb: "DC2626" } };
+        if (ci === 5) cell.s.font = { ...cell.s.font, bold: true, color: { rgb: isPaid ? "166534" : "D97706" } };
+      });
+    });
+    const totals = [["TOTALS", "", "", "Paid", tPaid, ""], ["", "", "", "Unpaid", tUnpaid, ""], ["", "", "", "Total", tAll, ""]];
+    XLSXStyle.utils.sheet_add_aoa(ws, totals, { origin: -1 });
+    const startTot = dataRows.length + 5;
+    [[tPaid, "166534"], [tUnpaid, "D97706"], [tAll, "111827"]].forEach(([amt, color], ti) => {
+      const ri = startTot + ti;
+      cols.forEach((col, ci) => {
+        const cell = ws[`${col}${ri}`];
+        if (!cell) return;
+        cell.s = { font: { bold: true, sz: 10, name: "Calibri", color: { rgb: ci === 4 ? String(color) : "111827" } }, fill: { fgColor: { rgb: "F0FDF4" } }, alignment: { horizontal: ci === 4 ? "right" : "left" }, border: { ...allBorder, ...(ti === 0 ? { top: { style: "medium" as const, color: { rgb: "16A34A" } } } : {}) } };
+      });
+    });
+    ws["!rows"] = [{ hpt: 36 }, { hpt: 20 }, { hpt: 8 }, { hpt: 22 }, ...dataRows.map(() => ({ hpt: 18 }))];
+    const wb = XLSXStyle.utils.book_new();
+    XLSXStyle.utils.book_append_sheet(wb, ws, "Expenses");
+    const safeName = label.replace(/\s+/g, "-");
+    XLSXStyle.writeFile(wb, `Expenses-${safeName}-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
 
   const totalAssetValue    = assets.reduce((s, a) => s + a.currentValue, 0);
   const totalPurchaseValue = assets.reduce((s, a) => s + a.purchaseValue, 0);
@@ -705,80 +775,37 @@ export default function AccountingPage() {
               <div className="flex items-center justify-between">
                 <CardTitle>Expense Records</CardTitle>
                 {expenses.length > 0 && (
-                  <button
-                    onClick={async () => {
-                      const XLSXStyle = (await import("xlsx-js-style")).default;
-                      const companyName = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}").companyName ?? "Company" : "Company";
-                      const today = new Date().toLocaleDateString("en-GB");
-                      const headerRow = ["No.", "Date", "Category", "Description", "Amount (RWF)", "Status"];
-                      const dataRows = expenses.map((e, i) => [
-                        i + 1,
-                        new Date(e.date).toLocaleDateString("en-GB"),
-                        e.category,
-                        e.description,
-                        e.amount,
-                        e.isPaid ? "Paid" : "Unpaid",
-                      ]);
-                      const totalPaid   = expenses.filter((e) => e.isPaid).reduce((s, e) => s + e.amount, 0);
-                      const totalUnpaid = expenses.filter((e) => !e.isPaid).reduce((s, e) => s + e.amount, 0);
-                      const totalAll    = expenses.reduce((s, e) => s + e.amount, 0);
-                      const titleRow = [`${companyName} — Expense Records Export`, "", "", "", "", ""];
-                      const dateRow  = [`Generated: ${today}  ·  ${expenses.length} records`, "", "", "", "", ""];
-                      const wsData = [titleRow, dateRow, ["","","","","",""], headerRow, ...dataRows];
-                      const ws = XLSXStyle.utils.aoa_to_sheet(wsData);
-                      ws["!cols"] = [{ wch: 5 }, { wch: 13 }, { wch: 22 }, { wch: 38 }, { wch: 20 }, { wch: 10 }];
-                      ws["!merges"] = [
-                        { s: { r: 0, c: 0 }, e: { r: 0, c: 5 } },
-                        { s: { r: 1, c: 0 }, e: { r: 1, c: 5 } },
-                      ];
-                      const GREEN = "166534"; const WHITE = "FFFFFF"; const LGRAY = "F3F4F6";
-                      const BORDER = { style: "thin", color: { rgb: "D1D5DB" } };
-                      const allBorder = { top: BORDER, bottom: BORDER, left: BORDER, right: BORDER };
-                      const cols = ["A","B","C","D","E","F"];
-                      const t1 = ws["A1"]; if (t1) t1.s = { font: { bold: true, sz: 16, color: { rgb: WHITE }, name: "Calibri" }, fill: { fgColor: { rgb: GREEN } }, alignment: { horizontal: "center" } };
-                      const t2 = ws["A2"]; if (t2) t2.s = { font: { sz: 11, color: { rgb: "6B7280" }, name: "Calibri" }, fill: { fgColor: { rgb: "F9FAFB" } }, alignment: { horizontal: "center" } };
-                      cols.forEach((col) => {
-                        const cell = ws[`${col}4`];
-                        if (cell) cell.s = { font: { bold: true, sz: 10, color: { rgb: WHITE }, name: "Calibri" }, fill: { fgColor: { rgb: GREEN } }, alignment: { horizontal: "center", vertical: "center" }, border: allBorder };
-                      });
-                      dataRows.forEach((row, ri) => {
-                        const rowIndex = ri + 5;
-                        const isAlt = ri % 2 === 1;
-                        const isPaid = row[5] === "Paid";
-                        cols.forEach((col, ci) => {
-                          const cell = ws[`${col}${rowIndex}`];
-                          if (!cell) return;
-                          cell.s = {
-                            font: { sz: 10, name: "Calibri" },
-                            fill: { fgColor: { rgb: isAlt ? LGRAY : WHITE } },
-                            alignment: { horizontal: [0, 4].includes(ci) ? "right" : "left", vertical: "center" },
-                            border: allBorder,
-                          };
-                          if (ci === 4) cell.s.font = { ...cell.s.font, bold: true, color: { rgb: "DC2626" } };
-                          if (ci === 5) cell.s.font = { ...cell.s.font, bold: true, color: { rgb: isPaid ? "166534" : "D97706" } };
-                        });
-                      });
-                      // Totals
-                      const totals = [["TOTALS", "", "", "Paid", totalPaid, ""], ["", "", "", "Unpaid", totalUnpaid, ""], ["", "", "", "Total", totalAll, ""]];
-                      XLSXStyle.utils.sheet_add_aoa(ws, totals, { origin: -1 });
-                      const startTot = dataRows.length + 5;
-                      [[totalPaid, "166534"], [totalUnpaid, "D97706"], [totalAll, "111827"]].forEach(([amt, color], ti) => {
-                        const ri = startTot + ti;
-                        ["A","B","C","D","E","F"].forEach((col, ci) => {
-                          const cell = ws[`${col}${ri}`];
-                          if (!cell) return;
-                          cell.s = { font: { bold: true, sz: 10, name: "Calibri", color: { rgb: ci === 4 ? String(color) : "111827" } }, fill: { fgColor: { rgb: "F0FDF4" } }, alignment: { horizontal: ci === 4 ? "right" : "left" }, border: { ...allBorder, ...(ti === 0 ? { top: { style: "medium" as const, color: { rgb: "16A34A" } } } : {}) } };
-                        });
-                      });
-                      ws["!rows"] = [{ hpt: 36 }, { hpt: 20 }, { hpt: 8 }, { hpt: 22 }, ...dataRows.map(() => ({ hpt: 18 }))];
-                      const wb = XLSXStyle.utils.book_new();
-                      XLSXStyle.utils.book_append_sheet(wb, ws, "Expenses");
-                      XLSXStyle.writeFile(wb, `Expenses-Export-${new Date().toISOString().slice(0, 10)}.xlsx`);
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-green-600 text-xs font-medium text-green-700 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
-                  >
-                    <ArrowDownToLine className="w-3.5 h-3.5" /> Export Excel
-                  </button>
+                  <div className="relative">
+                    <button
+                      onClick={() => setExportDropdownOpen((o) => !o)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-green-600 text-xs font-medium text-green-700 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+                    >
+                      <ArrowDownToLine className="w-3.5 h-3.5" /> Export Excel <ChevronDown className="w-3 h-3" />
+                    </button>
+                    {exportDropdownOpen && (
+                      <>
+                        <div className="fixed inset-0 z-10" onClick={() => setExportDropdownOpen(false)} />
+                        <div className="absolute right-0 top-full mt-1 z-20 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg py-1 min-w-[200px]">
+                          <button
+                            onClick={() => { setExportDropdownOpen(false); handleExportExpenses(null); }}
+                            className="w-full text-left px-4 py-2 text-xs font-semibold text-gray-900 dark:text-gray-100 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+                          >
+                            All Categories
+                          </button>
+                          <div className="border-t border-gray-100 dark:border-gray-800 my-1" />
+                          {EXPENSE_CATEGORIES.map((cat) => (
+                            <button
+                              key={cat}
+                              onClick={() => { setExportDropdownOpen(false); handleExportExpenses(cat); }}
+                              className="w-full text-left px-4 py-2 text-xs text-gray-700 dark:text-gray-300 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+                            >
+                              {cat}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
                 )}
               </div>
             </CardHeader>

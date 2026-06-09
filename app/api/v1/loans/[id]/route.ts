@@ -187,22 +187,52 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       const schedule       = updateData._schedule as ReturnType<typeof generateSchedule> | undefined;
       delete updateData._schedule;
 
+      // One-time upfront fees (non-recurring) paid by client before receiving the loan
+      const upfrontFees = await prisma.loanFee.findMany({
+        where: { loanId: id, isRecurring: false },
+      });
+      const totalUpfrontFees = upfrontFees.reduce((sum, fee) => {
+        const amt = fee.type === "fixed"
+          ? Number(fee.value)
+          : Math.round(disburseAmount * Number(fee.value) / 100);
+        return sum + amt;
+      }, 0);
+
       const updated = await prisma.$transaction(async (tx) => {
         const company = await tx.company.findUnique({
           where: { id: auth.companyId! },
           select: { accountBalance: true },
         });
-        const before = company?.accountBalance ?? 0;
-        const after  = before - disburseAmount;
+        const before    = company?.accountBalance ?? 0;
+        const afterFees = before + totalUpfrontFees;
+        const afterDisb = afterFees - disburseAmount;
 
-        await tx.company.update({ where: { id: auth.companyId! }, data: { accountBalance: after } });
+        await tx.company.update({ where: { id: auth.companyId! }, data: { accountBalance: afterDisb } });
+
+        // Credit upfront fees collected before disbursement
+        if (totalUpfrontFees > 0) {
+          await tx.ledgerEntry.create({
+            data: {
+              companyId:     auth.companyId!,
+              type:          "deposit",
+              amount:        totalUpfrontFees,
+              balanceBefore: before,
+              balanceAfter:  afterFees,
+              description:   `Upfront fees collected — ${id}`,
+              referenceId:   id,
+              createdById:   auth.userId,
+            },
+          });
+        }
+
+        // Debit disbursed principal
         await tx.ledgerEntry.create({
           data: {
             companyId:     auth.companyId!,
             type:          "disbursement",
             amount:        disburseAmount,
-            balanceBefore: before,
-            balanceAfter:  after,
+            balanceBefore: totalUpfrontFees > 0 ? afterFees : before,
+            balanceAfter:  afterDisb,
             description:   `Loan disbursement — ${id}`,
             referenceId:   id,
             createdById:   auth.userId,
