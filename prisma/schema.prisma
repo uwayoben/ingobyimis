@@ -205,6 +205,7 @@ model Loan {
   // Interest & repayment terms
   annualInterestRate      Decimal          @db.Decimal(6, 3)  // % per year, e.g. 24.000
   interestMethod          InterestMethod
+  bulletRepayment         Boolean          @default(false)
   repaymentFrequencyDays  Int              // 1=daily 7=weekly 14=biweekly 30=monthly
   gracePeriodDays         Int              @default(0)
   firstPaymentDate        DateTime?

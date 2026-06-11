@@ -153,6 +153,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         loan.repaymentFrequencyDays,
         Number(loan.managementFeeRate),
         Number((loan as any).processingFeeRate ?? 0),
+        0,
+        (loan as any).bulletRepayment ?? false,
       );
       const totalMgmtFeeScheduled        = schedule.reduce((s, r) => s + r.managementFeeDue, 0);
       const totalProcessingFeeScheduled  = schedule.reduce((s, r) => s + r.processingFeeDue, 0);

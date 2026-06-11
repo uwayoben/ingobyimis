@@ -92,6 +92,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const newSchedule = generateSchedule(
       combinedPrincipal, effectiveRate, loan.interestMethod, n,
       newFirstPaymentDate, loan.repaymentFrequencyDays, effectiveMgmtRate, effectiveProcRate,
+      0, (loan as any).bulletRepayment ?? false,
     );
     const newTotalMgmtFeeScheduled       = newSchedule.reduce((s, r) => s + r.managementFeeDue, 0);
     const newTotalProcessingFeeScheduled = newSchedule.reduce((s, r) => s + r.processingFeeDue, 0);

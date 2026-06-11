@@ -117,6 +117,7 @@ export interface Loan {
   disbursementDate?: string;
   annualInterestRate: number;
   interestMethod: InterestMethod;
+  bulletRepayment: boolean;
   repaymentFrequencyDays: number;
   gracePeriodDays: number;
   firstPaymentDate?: string;

@@ -2789,7 +2789,11 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                         >
                           <td className="px-4 py-2.5 font-medium text-gray-900 dark:text-gray-100">{row.installmentNo}</td>
                           <td className="px-4 py-2.5 text-gray-600 dark:text-gray-400">{formatDate(row.dueDate)}</td>
-                          <td className="px-4 py-2.5 text-green-600 dark:text-green-400 font-medium">{formatCurrency(row.principalDue)}</td>
+                          <td className="px-4 py-2.5 text-green-600 dark:text-green-400 font-medium">
+                            {(loan as any).bulletRepayment && row.principalDue === 0
+                              ? <span className="text-[10px] font-semibold bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded">Interest Only</span>
+                              : formatCurrency(row.principalDue)}
+                          </td>
                           {hasMgmtFee && (
                             <td className="px-4 py-2.5 text-purple-600 dark:text-purple-400">{formatCurrency(row.managementFeeDue)}</td>
                           )}

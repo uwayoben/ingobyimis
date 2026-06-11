@@ -14,6 +14,7 @@ const createSchema = z.object({
   amount:                 z.number().positive(),
   annualInterestRate:     z.number().positive(),
   interestMethod:         z.enum(["flat", "declining"]),
+  bulletRepayment:        z.boolean().default(false),
   repaymentFrequencyDays: z.number().int().positive(),
   gracePeriodDays:        z.number().int().min(0).default(0),
   // firstPaymentDate is calculated at disbursement — not required at registration
@@ -150,12 +151,15 @@ export async function POST(request: Request) {
     let totalMgmtFeeScheduled       = 0;
     let totalProcessingFeeScheduled = 0;
 
-    if (d.interestMethod === "flat") {
+    if (d.interestMethod === "flat" || d.bulletRepayment) {
       const totalInterest    = d.amount * interestPeriodRate * d.totalInstallments;
       const totalMgmtFee     = d.amount * mgmtFeePeriodRate  * d.totalInstallments;
       const totalProcFee     = d.amount * procFeePeriodRate  * d.totalInstallments;
       totalRepayable              = Math.round(d.amount + totalInterest + totalMgmtFee + totalProcFee);
-      nextPaymentAmount           = Math.round(totalRepayable / d.totalInstallments);
+      // For bullet: regular installment is interest+fees only; principal comes at the end
+      nextPaymentAmount           = d.bulletRepayment
+        ? Math.round((totalInterest + totalMgmtFee + totalProcFee) / d.totalInstallments)
+        : Math.round(totalRepayable / d.totalInstallments);
       totalInterestScheduled      = Math.round(totalInterest);
       totalMgmtFeeScheduled       = Math.round(totalMgmtFee);
       totalProcessingFeeScheduled = Math.round(totalProcFee);
@@ -211,6 +215,7 @@ export async function POST(request: Request) {
           amount:                 d.amount,
           annualInterestRate:     d.annualInterestRate,
           interestMethod:         d.interestMethod,
+          bulletRepayment:        d.bulletRepayment,
           repaymentFrequencyDays: d.repaymentFrequencyDays,
           gracePeriodDays:        d.gracePeriodDays,
           // firstPaymentDate, agreedMaturityDate, nextPaymentDate set at disbursement

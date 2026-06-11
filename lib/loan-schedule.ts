@@ -19,6 +19,7 @@ export function generateSchedule(
   annualMgmtFeeRate: number = 0,        // e.g. 12 for 1%/month — charged like interest
   annualProcessingFeeRate: number = 0,  // e.g. 6 for 0.5%/month — charged like interest
   oneTimeFeeTotal: number = 0,          // fixed fee divided equally across installments
+  bulletRepayment: boolean = false,     // true = interest-only each period, full principal on last
 ): InstallmentRow[] {
   const periodsPerYear        = 360 / repaymentFrequencyDays;
   const periodRate            = annualInterestRate      / 100 / periodsPerYear;
@@ -29,6 +30,47 @@ export function generateSchedule(
   const rows: InstallmentRow[] = [];
   const baseOneTimeFee   = totalInstallments > 0 ? Math.floor(oneTimeFeeTotal / totalInstallments) : 0;
   let oneTimeFeeSum      = 0;
+
+  if (bulletRepayment) {
+    // Interest-only installments 1…n-1, full principal + interest on installment n.
+    // Interest is always on full principal (balance never reduces).
+    const interestPerPeriod = Math.round(principal * periodRate);
+    const mgmtFeePerPeriod  = Math.round(principal * mgmtFeePeriodRate);
+    const procFeePerPeriod  = Math.round(principal * procFeePeriodRate);
+
+    let mgmtFeeSum  = 0;
+    let procFeeSum  = 0;
+    let interestSum = 0;
+    const baseOneTimeFee = totalInstallments > 0 ? Math.floor(oneTimeFeeTotal / totalInstallments) : 0;
+    let oneTimeFeeSum = 0;
+
+    for (let i = 0; i < totalInstallments; i++) {
+      const isLast           = i === totalInstallments - 1;
+      const principalDue     = isLast ? principal : 0;
+      const interestDue      = isLast ? Math.round(principal * periodRate       * totalInstallments) - interestSum : interestPerPeriod;
+      const managementFeeDue = isLast ? Math.round(principal * mgmtFeePeriodRate * totalInstallments) - mgmtFeeSum  : mgmtFeePerPeriod;
+      const processingFeeDue = isLast ? Math.round(principal * procFeePeriodRate * totalInstallments) - procFeeSum  : procFeePerPeriod;
+      const oneTimeFeeSlice  = isLast ? oneTimeFeeTotal - oneTimeFeeSum : baseOneTimeFee;
+
+      interestSum   += interestDue;
+      mgmtFeeSum    += managementFeeDue + oneTimeFeeSlice;
+      procFeeSum    += processingFeeDue;
+      oneTimeFeeSum += oneTimeFeeSlice;
+
+      const due = new Date(firstPaymentDate);
+      due.setDate(due.getDate() + i * repaymentFrequencyDays);
+      rows.push({
+        installmentNo: i + 1,
+        dueDate: due,
+        principalDue,
+        interestDue,
+        managementFeeDue: managementFeeDue + oneTimeFeeSlice,
+        processingFeeDue,
+        totalDue: principalDue + interestDue + managementFeeDue + oneTimeFeeSlice + processingFeeDue,
+      });
+    }
+    return rows;
+  }
 
   if (interestMethod === "flat") {
     const totalInterest    = principal * periodRate        * totalInstallments;

@@ -43,14 +43,20 @@ function addPeriods(dateStr: string, n: number, frequency: string): string {
   return d.toISOString().slice(0, 10);
 }
 
-function calcLoan(principal: number, periodRate: number, periodMgmtFeeRate: number, periodProcFeeRate: number, n: number, method: "flat" | "declining") {
+function calcLoan(principal: number, periodRate: number, periodMgmtFeeRate: number, periodProcFeeRate: number, n: number, method: "flat" | "declining", bullet = false) {
   if (principal <= 0 || n <= 0) return null;
   const r = periodRate        / 100;
   const m = periodMgmtFeeRate / 100;
   const p = periodProcFeeRate / 100;
   const combinedRate = r + m + p;
   let emi = 0, totalInterest = 0, totalMgmtFee = 0, totalProcFee = 0;
-  if (method === "flat") {
+  if (bullet) {
+    // Interest always on full principal; principal deferred to last installment
+    totalInterest = principal * r * n;
+    totalMgmtFee  = principal * m * n;
+    totalProcFee  = principal * p * n;
+    emi = (totalInterest + totalMgmtFee + totalProcFee) / n; // regular installment (no principal)
+  } else if (method === "flat") {
     totalInterest = principal * r * n;
     totalMgmtFee  = principal * m * n;
     totalProcFee  = principal * p * n;
@@ -337,6 +343,7 @@ export default function NewLoanPage() {
     principal:        0,
     monthlyRate:      "",
     interestMethod:   "declining" as "flat" | "declining",
+    bulletRepayment:  false,
     frequency:        "monthly",
     installments:     0,
     penaltyRate:      "",
@@ -380,7 +387,7 @@ export default function NewLoanPage() {
   const periodProcFeeRatePct = form.processingFeeMode === "per_installment"
     ? (parseFloat(form.processingFeeRate) || 0) * (freqDays / 30)
     : 0;
-  const calc = calcLoan(form.principal, periodRatePct, periodMgmtFeeRatePct, periodProcFeeRatePct, form.installments, form.interestMethod);
+  const calc = calcLoan(form.principal, periodRatePct, periodMgmtFeeRatePct, periodProcFeeRatePct, form.installments, form.interestMethod, form.bulletRepayment);
 
   const customerAddress = selected
     ? [selected.village, selected.cell, selected.sector, selected.district, selected.province].filter(Boolean).join(", ")
@@ -441,6 +448,7 @@ export default function NewLoanPage() {
           amount:                 form.principal,
           annualInterestRate:     (parseFloat(form.monthlyRate) || 0) * 12,
           interestMethod:         form.interestMethod,
+          bulletRepayment:        form.bulletRepayment,
           repaymentFrequencyDays: freqDays,
           totalInstallments:      form.installments,
           gracePeriodDays:        0,
@@ -594,6 +602,18 @@ export default function NewLoanPage() {
                     { value: "flat",      label: "Flat Rate" },
                   ]}
                 />
+                <label className="flex items-start gap-2.5 cursor-pointer pt-6">
+                  <input
+                    type="checkbox"
+                    checked={form.bulletRepayment}
+                    onChange={(e) => set("bulletRepayment", e.target.checked)}
+                    className="mt-0.5 w-4 h-4 accent-green-600"
+                  />
+                  <div>
+                    <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Bullet Repayment</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Interest-only payments each period; full principal due on final installment</p>
+                  </div>
+                </label>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -942,7 +962,7 @@ export default function NewLoanPage() {
                         { label: "Interest Rate",   value: `${form.monthlyRate}%/month` },
                         ...(form.managementFeeMode === "per_installment" && parseFloat(form.managementFeeRate) > 0
                           ? [{ label: "Mgmt Fee Rate", value: `${form.managementFeeRate}%/month` }] : []),
-                        { label: "Interest Method", value: form.interestMethod === "declining" ? "Declining Balance" : "Flat Rate" },
+                        { label: "Interest Method", value: form.bulletRepayment ? `${form.interestMethod === "declining" ? "Declining" : "Flat"} + Bullet Repayment` : form.interestMethod === "declining" ? "Declining Balance" : "Flat Rate" },
                       ].map((r) => (
                         <div key={r.label} className="flex justify-between text-xs">
                           <span className="text-gray-500 dark:text-gray-400">{r.label}</span>
