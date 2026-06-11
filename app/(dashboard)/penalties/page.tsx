@@ -76,6 +76,91 @@ interface Summary {
   loansWithPenalties: number;
 }
 
+function WaivePenaltyForm({ loan, onClose, onSaved }: { loan: ActivePenalty; onClose: () => void; onSaved: () => void }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [amount, setAmount] = useState("");
+  const [reason, setReason] = useState("");
+
+  const waivedAmt = Number(amount) || 0;
+  const remaining = Math.max(0, loan.penaltyAmount - waivedAmt);
+  const isFull = waivedAmt > 0 && waivedAmt >= loan.penaltyAmount;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    if (!amount || !reason.trim()) { setError("Both amount and reason are required."); return; }
+    const parsed = Number(amount);
+    if (!parsed || parsed <= 0) { setError("Enter a valid waiver amount."); return; }
+    if (parsed > loan.penaltyAmount) { setError(`Cannot waive more than the outstanding penalty (${formatCurrency(loan.penaltyAmount)}).`); return; }
+    setLoading(true);
+    try {
+      const res = await apiFetch(`/api/v1/loans/${loan.id}/waive`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: parsed, reason }),
+      });
+      const json = await res.json();
+      if (!res.ok) { setError(json.error || "Failed to waive penalty."); return; }
+      onSaved();
+    } catch {
+      setError("Network error. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="p-6 space-y-5">
+      {error && (
+        <p className="text-xs text-red-600 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">{error}</p>
+      )}
+
+      <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-3 text-xs text-amber-800 dark:text-amber-300 space-y-1">
+        <p>Customer: <strong>{loan.customerName}</strong></p>
+        <p>Loan ID: <strong className="font-mono">{loan.id.slice(0, 12).toUpperCase()}</strong></p>
+        <p>Outstanding penalty: <strong className="text-red-600 dark:text-red-400">{formatCurrency(loan.penaltyAmount)}</strong></p>
+      </div>
+
+      <Input
+        label="Amount to Waive (RWF)"
+        type="number"
+        min="1"
+        max={loan.penaltyAmount}
+        placeholder={`e.g. ${formatCurrency(Math.round(loan.penaltyAmount / 2))}`}
+        value={amount}
+        onChange={(e) => setAmount(e.target.value)}
+        required
+      />
+
+      {waivedAmt > 0 && (
+        <div className={`rounded-xl px-3 py-2 text-xs font-medium border ${
+          isFull
+            ? "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800"
+            : "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800"
+        }`}>
+          {isFull
+            ? "Full waiver — penalty will be cleared completely."
+            : `Partial waiver — remaining penalty after waiver: ${formatCurrency(remaining)}`}
+        </div>
+      )}
+
+      <Textarea
+        label="Reason (required)"
+        placeholder="e.g. Customer hardship, agreed settlement, management decision…"
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        required
+      />
+
+      <div className="flex justify-end gap-3">
+        <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+        <Button type="submit" loading={loading}>Waive Penalty</Button>
+      </div>
+    </form>
+  );
+}
+
 function AddPenaltyForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -190,6 +275,7 @@ export default function PenaltiesPage() {
   const [tab, setTab] = useState<ActiveTab>("active");
   const [search, setSearch] = useState("");
   const [showModal, setShowModal] = useState(false);
+  const [waivedLoan, setWaivedLoan] = useState<ActivePenalty | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -471,12 +557,20 @@ export default function PenaltiesPage() {
                           </span>
                         </td>
                         <td className="px-4 pr-6 py-3.5">
-                          <button
-                            onClick={() => setShowModal(true)}
-                            className="text-xs font-semibold text-red-600 dark:text-red-400 hover:underline flex items-center gap-1"
-                          >
-                            <Plus className="w-3 h-3" /> Add More
-                          </button>
+                          <div className="flex flex-col gap-1.5">
+                            <button
+                              onClick={() => setShowModal(true)}
+                              className="text-xs font-semibold text-red-600 dark:text-red-400 hover:underline flex items-center gap-1"
+                            >
+                              <Plus className="w-3 h-3" /> Add More
+                            </button>
+                            <button
+                              onClick={() => setWaivedLoan(row)}
+                              className="text-xs font-semibold text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1"
+                            >
+                              <MinusCircle className="w-3 h-3" /> Waive
+                            </button>
+                          </div>
                         </td>
                       </motion.tr>
                     );
@@ -654,6 +748,17 @@ export default function PenaltiesPage() {
           onClose={() => setShowModal(false)}
           onSaved={() => { setShowModal(false); fetchData(); }}
         />
+      </Modal>
+
+      {/* ── Waive Penalty Modal ───────────────────────────────────────── */}
+      <Modal isOpen={!!waivedLoan} onClose={() => setWaivedLoan(null)} title="Waive Penalty" size="md">
+        {waivedLoan && (
+          <WaivePenaltyForm
+            loan={waivedLoan}
+            onClose={() => setWaivedLoan(null)}
+            onSaved={() => { setWaivedLoan(null); fetchData(); }}
+          />
+        )}
       </Modal>
     </div>
   );
