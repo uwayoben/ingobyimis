@@ -143,6 +143,7 @@ function mockLoan(o: {
     provisionRequired: Math.round(o.balanceOutstanding * 0.01),
     previousProvision: 0,
     additionalProvision: 0,
+    bulletRepayment: false,
     isRestructured: false,
     topUpAmount: 0,
     penaltyPaid: 0,
