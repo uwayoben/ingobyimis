@@ -1,6 +1,7 @@
 generator client {
-  provider = "prisma-client"
-  output   = "../lib/generated/prisma"
+  provider      = "prisma-client"
+  output        = "../lib/generated/prisma"
+  binaryTargets = ["native", "debian-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
@@ -100,6 +101,11 @@ enum LedgerType {
   waiver
 }
 
+enum LiabilityStatus {
+  active
+  completed
+}
+
 // ─── Models ───────────────────────────────────────────────────────────────────
 
 model Company {
@@ -114,14 +120,16 @@ model Company {
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
-  users          User[]
-  customers      Customer[]
-  loans          Loan[]
-  payments       Payment[]
-  notifications  Notification[]
-  assets         Asset[]
-  expenses       Expense[]
-  ledgerEntries  LedgerEntry[]
+  users             User[]
+  customers         Customer[]
+  loans             Loan[]
+  payments          Payment[]
+  notifications     Notification[]
+  assets            Asset[]
+  expenses          Expense[]
+  ledgerEntries     LedgerEntry[]
+  liabilities       Liability[]
+  liabilityPayments LiabilityPayment[]
 }
 
 model User {
@@ -417,6 +425,43 @@ model LedgerEntry {
 
   @@index([companyId])
   @@index([createdAt])
+}
+
+model Liability {
+  id                 String          @id @default(cuid())
+  companyId          String
+  company            Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  lenderName         String
+  description        String?
+  principalAmount    Int
+  startDate          DateTime
+  dueDate            DateTime?
+  balanceOutstanding Int             @default(0)
+  totalPaid          Int             @default(0)
+  status             LiabilityStatus @default(active)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  payments           LiabilityPayment[]
+
+  @@index([companyId])
+}
+
+model LiabilityPayment {
+  id          String    @id @default(cuid())
+  liabilityId String
+  liability   Liability @relation(fields: [liabilityId], references: [id], onDelete: Cascade)
+  companyId   String
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  amount      Int
+  principal   Int       @default(0)
+  interest    Int       @default(0)
+  date        DateTime
+  notes       String?   @db.Text
+  createdAt   DateTime  @default(now())
+
+  @@index([liabilityId])
+  @@index([companyId])
 }
 
 model AuditLog {

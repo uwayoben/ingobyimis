@@ -2,6 +2,42 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUser } from "@/lib/auth";
 import { ok, badRequest, unauthorized, forbidden, notFound, serverError } from "@/lib/api-response";
 
+export async function PUT(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const auth = getAuthUser(request);
+    if (!auth) return unauthorized();
+    if (auth.role !== "super_admin") return forbidden();
+
+    const { id } = await params;
+    const { name, email, phone, address } = await request.json();
+
+    if (!name || !email || !phone || !address) {
+      return badRequest("Name, email, phone, and address are required.");
+    }
+
+    const company = await prisma.company.findUnique({ where: { id } });
+    if (!company) return notFound("Company not found.");
+
+    if (email !== company.email) {
+      const existing = await prisma.company.findUnique({ where: { email } });
+      if (existing) return badRequest("A company with this email already exists.");
+    }
+
+    const updated = await prisma.company.update({
+      where: { id },
+      data: { name, email, phone, address },
+    });
+
+    return ok(updated);
+  } catch (e) {
+    console.error(e);
+    return serverError();
+  }
+}
+
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }

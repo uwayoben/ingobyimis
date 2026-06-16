@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Download, BarChart3, FileCheck, TrendingUp, Building2, X, Loader2,
-  AlertTriangle, CheckCircle2, Search, RefreshCw, Calendar, FileText, Printer,
+  AlertTriangle, CheckCircle2, Search, RefreshCw, Calendar, FileText, Printer, Scale,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -49,6 +49,145 @@ function getPreset(label: string): { from: string; to: string } {
     default:
       return { from: isoDate(new Date(y, 0, 1)), to: isoDate(new Date(y, 11, 31)) };
   }
+}
+
+// ── P&L Statement Generator ───────────────────────────────────────────────────
+
+function downloadPLStatement(
+  income: { interestIncome: number; penaltyIncome: number; feeIncome: number; totalIncome: number },
+  expenses: { byCategory: { category: string; amount: number }[]; total: number },
+  period: { from: string; to: string }
+) {
+  const companyName = typeof window !== "undefined"
+    ? (() => { try { return JSON.parse(localStorage.getItem("user") || "{}").companyName ?? "Company"; } catch { return "Company"; } })()
+    : "Company";
+
+  const today     = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+  const fromLabel = new Date(period.from).toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+  const toLabel   = new Date(period.to).toLocaleDateString("en-GB",   { day: "2-digit", month: "long", year: "numeric" });
+  const netProfit = income.totalIncome - expenses.total;
+  const isProfit  = netProfit >= 0;
+
+  const incomeRows = [
+    { label: "Interest Income",  amount: income.interestIncome },
+    { label: "Penalty Income",   amount: income.penaltyIncome  },
+    { label: "Processing / Loan Fees", amount: income.feeIncome },
+  ].map((r, i) => `
+    <tr style="background:${i % 2 === 0 ? "#fff" : "#f9fafb"}">
+      <td style="padding:8px 16px;border-bottom:1px solid #e5e7eb">${r.label}</td>
+      <td></td>
+      <td style="padding:8px 16px;text-align:right;font-weight:600;color:#166534;border-bottom:1px solid #e5e7eb">${r.amount > 0 ? "RWF " + r.amount.toLocaleString() : "—"}</td>
+    </tr>`).join("");
+
+  const expenseRows = expenses.byCategory.map((c, i) => `
+    <tr style="background:${i % 2 === 0 ? "#fff" : "#f9fafb"}">
+      <td style="padding:8px 16px;border-bottom:1px solid #e5e7eb">${c.category}</td>
+      <td></td>
+      <td style="padding:8px 16px;text-align:right;font-weight:600;color:#dc2626;border-bottom:1px solid #e5e7eb">(RWF ${c.amount.toLocaleString()})</td>
+    </tr>`).join("");
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/>
+<title>Profit & Loss Statement</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#1a1a1a;background:#fff}
+  .page{max-width:720px;margin:0 auto;padding:40px}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:30px;padding-bottom:20px;border-bottom:3px solid #166534}
+  .co-name{font-size:20px;font-weight:800;color:#166534}
+  .co-sub{font-size:11px;color:#888;margin-top:3px}
+  .title h1{font-size:18px;font-weight:800;color:#166534;text-align:right;text-transform:uppercase;letter-spacing:1px}
+  .title p{font-size:10px;color:#666;text-align:right;margin-top:4px;line-height:1.7}
+  table{width:100%;border-collapse:collapse;margin-bottom:0}
+  .section-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#fff;background:#052e16;padding:7px 16px}
+  .subtotal td{background:#f0fdf4;font-weight:700;font-size:12px;padding:8px 16px;border-top:2px solid #16a34a}
+  .subtotal td:last-child{text-align:right;color:#166534}
+  .total-expenses td:last-child{color:#dc2626 !important}
+  .net-row td{padding:12px 16px;font-size:15px;font-weight:800;border-top:3px double #111}
+  .net-row td:last-child{text-align:right}
+  .col-label{width:55%}.col-spacer{width:20%}.col-amount{width:25%;text-align:right}
+  .toolbar{position:fixed;top:14px;right:14px;display:flex;gap:8px;z-index:9}
+  .btn-dl{background:#166534;color:#fff;border:none;padding:7px 18px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer}
+  .btn-pr{background:#fff;color:#166534;border:2px solid #166534;padding:7px 18px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer}
+  @media print{.toolbar{display:none}.page{padding:24px}}
+</style></head>
+<body>
+<div class="toolbar">
+  <button class="btn-pr" onclick="window.print()">🖨 Print</button>
+  <button class="btn-dl" id="dlBtn" onclick="downloadPDF()">⬇ Download PDF</button>
+</div>
+<div class="page" id="content">
+  <div class="header">
+    <div>
+      <div class="co-name">${companyName}</div>
+      <div class="co-sub">NDFSP Microfinance</div>
+    </div>
+    <div class="title">
+      <h1>Profit & Loss Statement</h1>
+      <p>Period: ${fromLabel} – ${toLabel}<br/>Generated: ${today}</p>
+    </div>
+  </div>
+
+  <table>
+    <colgroup>
+      <col class="col-label"/><col class="col-spacer"/><col class="col-amount"/>
+    </colgroup>
+
+    <!-- INCOME -->
+    <tr><td colspan="3" class="section-label">Income</td></tr>
+    ${incomeRows}
+    <tr class="subtotal">
+      <td>Total Income</td><td></td>
+      <td>RWF ${income.totalIncome.toLocaleString()}</td>
+    </tr>
+
+    <!-- SPACER -->
+    <tr><td colspan="3" style="padding:6px"></td></tr>
+
+    <!-- EXPENSES -->
+    <tr><td colspan="3" class="section-label">Operating Expenses</td></tr>
+    ${expenseRows}
+    <tr class="subtotal total-expenses">
+      <td>Total Expenses</td><td></td>
+      <td>(RWF ${expenses.total.toLocaleString()})</td>
+    </tr>
+
+    <!-- SPACER -->
+    <tr><td colspan="3" style="padding:6px"></td></tr>
+
+    <!-- NET -->
+    <tr class="net-row" style="color:${isProfit ? "#166534" : "#dc2626"}">
+      <td colspan="2"><strong>Net ${isProfit ? "Profit" : "Loss"}</strong></td>
+      <td><strong>${isProfit ? "" : "("}RWF ${Math.abs(netProfit).toLocaleString()}${isProfit ? "" : ")"}</strong></td>
+    </tr>
+  </table>
+
+  <p style="margin-top:40px;font-size:9px;color:#aaa;text-align:center">
+    This statement was generated automatically from recorded income and expense data for the period stated above.
+  </p>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script>
+  function downloadPDF(){
+    var btn=document.getElementById('dlBtn');
+    btn.disabled=true;btn.textContent='Generating…';
+    html2pdf().set({
+      margin:[12,12,12,12],
+      filename:'ProfitLoss-Statement-${new Date().toISOString().slice(0,10)}.pdf',
+      image:{type:'jpeg',quality:0.98},
+      html2canvas:{scale:2,useCORS:true,logging:false},
+      jsPDF:{unit:'mm',format:'a4',orientation:'portrait'}
+    }).from(document.getElementById('content')).save().then(function(){
+      btn.disabled=false;btn.textContent='⬇ Download PDF';
+    });
+  }
+  window.onload=()=>window.print();
+</script>
+</body></html>`;
+
+  const w = window.open("", "_blank", "width=860,height=750");
+  if (!w) return;
+  w.document.write(html);
+  w.document.close();
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -268,6 +407,7 @@ function OverviewTab({ data, dark, onBNR }: { data: SummaryData; dark: boolean; 
   const [dlIncome,    setDlIncome]    = useState(false);
   const [dlPortfolio, setDlPortfolio] = useState(false);
   const [dlCRB,       setDlCRB]       = useState(false);
+  const [dlPL,        setDlPL]        = useState(false);
 
   const handleIncomeReport = async () => {
     setDlIncome(true);
@@ -684,12 +824,13 @@ function OverviewTab({ data, dark, onBNR }: { data: SummaryData; dark: boolean; 
       </div>
 
       {/* Download cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
         {[
-          { id: "bnr",       title: "BNR Compliance",    desc: "BNR-format Excel for submission",     icon: <FileCheck className="w-5 h-5" />,  badge: "Excel",     variant: "info"    as const },
-          { id: "portfolio", title: "Portfolio Report",   desc: "Full loan portfolio and aging",        icon: <BarChart3 className="w-5 h-5" />,  badge: "Real-time", variant: "success" as const },
-          { id: "crb",       title: "CRB Report",        desc: "Credit reference bureau export",       icon: <Building2 className="w-5 h-5" />,  badge: "CSV",       variant: "neutral" as const },
-          { id: "income",    title: "Income & Expense",   desc: "Revenue vs expenditure statement",     icon: <TrendingUp className="w-5 h-5" />, badge: "Period",    variant: "warning" as const },
+          { id: "bnr",       title: "BNR Compliance",       desc: "BNR-format Excel for submission",       icon: <FileCheck className="w-5 h-5" />,  badge: "Excel",     variant: "info"    as const },
+          { id: "portfolio", title: "Portfolio Report",      desc: "Full loan portfolio and aging",          icon: <BarChart3 className="w-5 h-5" />,  badge: "Real-time", variant: "success" as const },
+          { id: "crb",       title: "CRB Report",           desc: "Credit reference bureau export",         icon: <Building2 className="w-5 h-5" />,  badge: "CSV",       variant: "neutral" as const },
+          { id: "income",    title: "Income & Expense",      desc: "Revenue vs expenditure statement",       icon: <TrendingUp className="w-5 h-5" />, badge: "Period",    variant: "warning" as const },
+          { id: "pl",        title: "P&L Statement",         desc: "Formal profit & loss with breakdowns",  icon: <FileText className="w-5 h-5" />,   badge: "PDF",       variant: "success" as const },
         ].map((r) => (
           <div key={r.id} className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5">
             <div className="flex items-start justify-between mb-3">
@@ -699,12 +840,20 @@ function OverviewTab({ data, dark, onBNR }: { data: SummaryData; dark: boolean; 
             <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">{r.title}</h3>
             <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed mb-3">{r.desc}</p>
             <button
-              disabled={(r.id === "income" && dlIncome) || (r.id === "portfolio" && dlPortfolio) || (r.id === "crb" && dlCRB)}
+              disabled={
+                (r.id === "income" && dlIncome) || (r.id === "portfolio" && dlPortfolio) ||
+                (r.id === "crb" && dlCRB) || (r.id === "pl" && dlPL)
+              }
               onClick={() => {
                 if (r.id === "bnr")       onBNR();
                 if (r.id === "income")    handleIncomeReport();
                 if (r.id === "portfolio") handlePortfolioReport();
                 if (r.id === "crb")       handleCRBReport();
+                if (r.id === "pl") {
+                  setDlPL(true);
+                  downloadPLStatement(data.income, data.expenses, data.period);
+                  setTimeout(() => setDlPL(false), 1500);
+                }
               }}
               className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors disabled:opacity-50">
               <Download className="w-3 h-3" />
@@ -712,6 +861,7 @@ function OverviewTab({ data, dark, onBNR }: { data: SummaryData; dark: boolean; 
                r.id === "income"    ? (dlIncome     ? "Loading…" : "Download") :
                r.id === "portfolio" ? (dlPortfolio  ? "Loading…" : "Download") :
                r.id === "crb"       ? (dlCRB        ? "Loading…" : "Download") :
+               r.id === "pl"        ? (dlPL         ? "Opening…" : "Download") :
                "Coming soon"}
             </button>
           </div>
@@ -785,6 +935,13 @@ function IncomeTab({ data }: { data: SummaryData }) {
   const { income, expenses } = data;
   const netProfit = income.totalIncome - expenses.total;
   const [downloading, setDownloading] = useState(false);
+  const [dlPL, setDlPL] = useState(false);
+
+  const handleDownloadPL = () => {
+    setDlPL(true);
+    downloadPLStatement(income, expenses, data.period);
+    setTimeout(() => setDlPL(false), 1500);
+  };
 
   const handleDownloadExpenses = async () => {
     setDownloading(true);
@@ -886,6 +1043,25 @@ function IncomeTab({ data }: { data: SummaryData }) {
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+      {/* P&L download banner */}
+      <div className="flex items-center justify-between bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl px-5 py-3.5">
+        <div className="flex items-center gap-3">
+          <FileText className="w-5 h-5 text-green-700 dark:text-green-400 shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-green-900 dark:text-green-200">Profit & Loss Statement</p>
+            <p className="text-xs text-green-700/70 dark:text-green-400/70">Download a formal P&L with income breakdown, expense categories, and net result</p>
+          </div>
+        </div>
+        <button
+          onClick={handleDownloadPL}
+          disabled={dlPL}
+          className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl bg-green-700 hover:bg-green-800 text-white transition-colors disabled:opacity-60 shrink-0"
+        >
+          {dlPL ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+          {dlPL ? "Opening…" : "Download P&L"}
+        </button>
+      </div>
+
       {/* Summary KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card className="border-l-4 border-l-emerald-500">
@@ -1180,9 +1356,575 @@ function ScheduleTab({ from, to }: { from: string; to: string }) {
   );
 }
 
+// ── Trial Balance Tab ─────────────────────────────────────────────────────────
+
+interface TBRow {
+  account:        string;
+  initialBalance: number;
+  debit:          number;
+  credit:         number;
+  balance:        number;
+}
+interface TBData {
+  rows:   TBRow[];
+  totals: TBRow;
+  period: { from: string; to: string };
+}
+
+function fmtTB(n: number) {
+  return n === 0 ? "—" : Math.round(n).toLocaleString();
+}
+
+function downloadTrialBalance(data: TBData) {
+  const companyName = typeof window !== "undefined"
+    ? (() => { try { return JSON.parse(localStorage.getItem("user") || "{}").companyName ?? "Company"; } catch { return "Company"; } })()
+    : "Company";
+
+  const today     = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+  const fromLabel = new Date(data.period.from).toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+  const toLabel   = new Date(data.period.to).toLocaleDateString("en-GB",   { day: "2-digit", month: "long", year: "numeric" });
+
+  const bodyRows = data.rows.map((r, i) => `
+    <tr style="background:${i % 2 === 0 ? "#fff" : "#f5f5f5"}">
+      <td style="padding:7px 10px;border-bottom:1px solid #ddd">${r.account}</td>
+      <td style="padding:7px 10px;text-align:right;border-bottom:1px solid #ddd">${r.initialBalance === 0 ? "—" : Math.round(r.initialBalance).toLocaleString()}</td>
+      <td style="padding:7px 10px;text-align:right;border-bottom:1px solid #ddd">${r.debit === 0 ? "—" : Math.round(r.debit).toLocaleString()}</td>
+      <td style="padding:7px 10px;text-align:right;border-bottom:1px solid #ddd">${r.credit === 0 ? "—" : Math.round(r.credit).toLocaleString()}</td>
+      <td style="padding:7px 10px;text-align:right;border-bottom:1px solid #ddd;font-weight:600">${Math.round(r.balance).toLocaleString()}</td>
+    </tr>`).join("");
+
+  const t = data.totals;
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/>
+<title>Trial Balance</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;color:#1a1a1a;background:#fff}
+  .page{max-width:820px;margin:0 auto;padding:36px}
+  .header{text-align:center;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #222}
+  .co-name{font-size:16px;font-weight:800;text-transform:uppercase;letter-spacing:1px}
+  .title{font-size:13px;font-weight:700;text-transform:uppercase;margin-top:4px;letter-spacing:0.5px}
+  .period{font-size:10px;color:#555;margin-top:3px}
+  table{width:100%;border-collapse:collapse}
+  thead th{background:#d9d9d9;border:1px solid #bbb;padding:7px 10px;font-size:10px;font-weight:700;text-align:right}
+  thead th:first-child{text-align:left}
+  .total-row td{background:#d9d9d9;border:1px solid #bbb;padding:8px 10px;font-size:11px;font-weight:800;text-align:right}
+  .total-row td:first-child{text-align:left}
+  .toolbar{position:fixed;top:14px;right:14px;display:flex;gap:8px;z-index:9}
+  .btn-dl{background:#166534;color:#fff;border:none;padding:7px 18px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer}
+  .btn-pr{background:#fff;color:#166534;border:2px solid #166534;padding:7px 18px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer}
+  @media print{.toolbar{display:none}.page{padding:20px}}
+</style></head>
+<body>
+<div class="toolbar">
+  <button class="btn-pr" onclick="window.print()">🖨 Print</button>
+  <button class="btn-dl" id="dlBtn" onclick="downloadPDF()">⬇ Download PDF</button>
+</div>
+<div class="page" id="content">
+  <div class="header">
+    <div class="co-name">${companyName}</div>
+    <div class="title">Trial Balance</div>
+    <div class="period">Period: ${fromLabel} — ${toLabel} &nbsp;|&nbsp; Generated: ${today}</div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="text-align:left;width:36%">Accounts</th>
+        <th>Initial balance</th>
+        <th>Debit</th>
+        <th>Credit</th>
+        <th>Balance</th>
+      </tr>
+    </thead>
+    <tbody>${bodyRows}</tbody>
+    <tfoot>
+      <tr class="total-row">
+        <td>Total</td>
+        <td>${Math.round(t.initialBalance).toLocaleString()}</td>
+        <td>${Math.round(t.debit).toLocaleString()}</td>
+        <td>${Math.round(t.credit).toLocaleString()}</td>
+        <td>${Math.round(t.balance).toLocaleString()}</td>
+      </tr>
+    </tfoot>
+  </table>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script>
+  function downloadPDF(){
+    var btn=document.getElementById('dlBtn');
+    btn.disabled=true;btn.textContent='Generating…';
+    html2pdf().set({
+      margin:[12,12,12,12],
+      filename:'Trial-Balance-${new Date().toISOString().slice(0,10)}.pdf',
+      image:{type:'jpeg',quality:0.98},
+      html2canvas:{scale:2,useCORS:true,logging:false},
+      jsPDF:{unit:'mm',format:'a4',orientation:'portrait'}
+    }).from(document.getElementById('content')).save().then(function(){
+      btn.disabled=false;btn.textContent='⬇ Download PDF';
+    });
+  }
+  window.onload=()=>window.print();
+</script>
+</body></html>`;
+
+  const w = window.open("", "_blank", "width=880,height=750");
+  if (!w) return;
+  w.document.write(html);
+  w.document.close();
+}
+
+function TrialBalanceTab({ from, to }: { from: string; to: string }) {
+  const [data,    setData]    = useState<TBData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error,   setError]   = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true); setError("");
+    try {
+      const params = new URLSearchParams({ from, to });
+      const res = await apiFetch(`/api/v1/reports/trial-balance?${params}`);
+      if (!res.ok) { setError("Failed to load trial balance."); return; }
+      const json = await res.json();
+      setData(json.data);
+    } catch { setError("Network error."); }
+    finally { setLoading(false); }
+  }, [from, to]);
+
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+      {/* Header banner */}
+      <div className="flex items-center justify-between bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl px-5 py-3.5">
+        <div className="flex items-center gap-3">
+          <Scale className="w-5 h-5 text-green-700 dark:text-green-400 shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-green-900 dark:text-green-200">Trial Balance</p>
+            <p className="text-xs text-green-700/70 dark:text-green-400/70">
+              All account balances — initial balance, debit, credit, and closing balance
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={() => data && downloadTrialBalance(data)}
+          disabled={!data}
+          className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl bg-green-700 hover:bg-green-800 text-white transition-colors disabled:opacity-60 shrink-0"
+        >
+          <Download className="w-4 h-4" />
+          Download PDF
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="w-6 h-6 animate-spin text-green-600" />
+        </div>
+      ) : error ? (
+        <div className="flex flex-col items-center justify-center py-20 gap-3">
+          <AlertTriangle className="w-8 h-8 text-red-500" />
+          <p className="text-sm text-gray-600 dark:text-gray-400">{error}</p>
+          <Button variant="outline" onClick={load}>Retry</Button>
+        </div>
+      ) : data && (
+        <Card>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-gray-100 dark:bg-gray-800 border-b-2 border-gray-300 dark:border-gray-600 text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left w-[36%]">Accounts</th>
+                  <th className="px-4 py-3 text-right">Initial Balance</th>
+                  <th className="px-4 py-3 text-right">Debit</th>
+                  <th className="px-4 py-3 text-right">Credit</th>
+                  <th className="px-4 py-3 text-right">Balance</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                {data.rows.map((r, i) => (
+                  <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-800/30 text-xs">
+                    <td className="px-4 py-2.5 text-gray-800 dark:text-gray-200 font-medium">{r.account}</td>
+                    <td className="px-4 py-2.5 text-right text-gray-500 dark:text-gray-400">
+                      {r.initialBalance === 0 ? <span className="text-gray-300 dark:text-gray-600">—</span> : fmtTB(r.initialBalance)}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-gray-700 dark:text-gray-300">
+                      {r.debit === 0 ? <span className="text-gray-300 dark:text-gray-600">—</span> : fmtTB(r.debit)}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-gray-700 dark:text-gray-300">
+                      {r.credit === 0 ? <span className="text-gray-300 dark:text-gray-600">—</span> : fmtTB(r.credit)}
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-semibold text-gray-900 dark:text-gray-100">
+                      {fmtTB(Math.abs(r.balance))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="bg-gray-100 dark:bg-gray-800 border-t-2 border-gray-300 dark:border-gray-600 text-xs font-bold text-gray-900 dark:text-gray-100">
+                  <td className="px-4 py-3">Total</td>
+                  <td className="px-4 py-3 text-right">{fmtTB(data.totals.initialBalance)}</td>
+                  <td className="px-4 py-3 text-right">{fmtTB(data.totals.debit)}</td>
+                  <td className="px-4 py-3 text-right">{fmtTB(data.totals.credit)}</td>
+                  <td className="px-4 py-3 text-right">{fmtTB(Math.abs(data.totals.balance))}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </Card>
+      )}
+    </motion.div>
+  );
+}
+
+// ── Balance Sheet Tab ─────────────────────────────────────────────────────────
+
+interface BSData {
+  asOf:   string;
+  period: { from: string; to: string };
+  assets: {
+    current: {
+      cashAndBank: number; loanPortfolioGross: number; provision: number;
+      loanPortfolioNet: number; interestReceivable: number; total: number;
+    };
+    nonCurrent: {
+      fixedAssetsGross: number; accumulatedDeprec: number; fixedAssetsNet: number;
+      items: { name: string; category: string; value: number }[];
+      total: number;
+    };
+    total: number;
+  };
+  liabilities: {
+    current: {
+      accountsPayable: number;
+      loansPayable: { name: string; amount: number; dueDate: string | null }[];
+      totalLoansPayable: number; total: number;
+    };
+    total: number;
+  };
+  equity: { retainedEarnings: number; netProfitLoss: number; total: number };
+  balanced: boolean;
+}
+
+function downloadBalanceSheet(data: BSData) {
+  const companyName = typeof window !== "undefined"
+    ? (() => { try { return JSON.parse(localStorage.getItem("user") || "{}").companyName ?? "Company"; } catch { return "Company"; } })()
+    : "Company";
+
+  const today  = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+  const asOfLabel = new Date(data.asOf).toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+  const n = (v: number) => Math.round(v).toLocaleString();
+  const isProfit = data.equity.netProfitLoss >= 0;
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/>
+<title>Balance Sheet</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;color:#1a1a1a;background:#fff}
+  .page{max-width:760px;margin:0 auto;padding:36px}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px;padding-bottom:18px;border-bottom:3px solid #166534}
+  .co-name{font-size:18px;font-weight:800;color:#166534}
+  .co-sub{font-size:10px;color:#888;margin-top:3px}
+  .title h1{font-size:16px;font-weight:800;color:#166534;text-align:right;text-transform:uppercase;letter-spacing:1px}
+  .title p{font-size:10px;color:#666;text-align:right;margin-top:4px;line-height:1.6}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+  .section-header{background:#052e16;color:#fff;padding:7px 12px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:0}
+  .sub-header{background:#e7f3ec;color:#166534;padding:5px 12px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px}
+  .row{display:flex;justify-content:space-between;padding:5px 12px;border-bottom:1px solid #f0f0f0}
+  .row.indent{padding-left:24px}
+  .row label{color:#374151}
+  .row span{font-weight:600;color:#111}
+  .sub-total{display:flex;justify-content:space-between;padding:6px 12px;background:#f0fdf4;font-weight:700;font-size:11px;border-top:1px solid #16a34a}
+  .sub-total span{color:#166534}
+  .grand-total{display:flex;justify-content:space-between;padding:10px 12px;background:#052e16;color:#fff;font-size:13px;font-weight:800;margin-top:4px}
+  .note{font-size:10px;color:#111;padding:7px 12px;background:#fefce8;border:1px solid #fde68a;margin-top:6px}
+  .toolbar{position:fixed;top:14px;right:14px;display:flex;gap:8px;z-index:9}
+  .btn-dl{background:#166534;color:#fff;border:none;padding:7px 18px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer}
+  .btn-pr{background:#fff;color:#166534;border:2px solid #166534;padding:7px 18px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer}
+  @media print{.toolbar{display:none}.page{padding:20px}}
+</style></head>
+<body>
+<div class="toolbar">
+  <button class="btn-pr" onclick="window.print()">🖨 Print</button>
+  <button class="btn-dl" id="dlBtn" onclick="downloadPDF()">⬇ Download PDF</button>
+</div>
+<div class="page" id="content">
+  <div class="header">
+    <div><div class="co-name">${companyName}</div><div class="co-sub">NDFSP Microfinance</div></div>
+    <div class="title"><h1>Balance Sheet</h1><p>As at: ${asOfLabel}<br/>Generated: ${today}</p></div>
+  </div>
+
+  <div class="grid">
+    <!-- LEFT: ASSETS -->
+    <div>
+      <div class="section-header">Assets</div>
+
+      <div class="sub-header">Current Assets</div>
+      <div class="row"><label>Cash &amp; Bank Balance</label><span>RWF ${n(data.assets.current.cashAndBank)}</span></div>
+      <div class="row"><label>Loan Portfolio (Gross)</label><span>RWF ${n(data.assets.current.loanPortfolioGross)}</span></div>
+      <div class="row indent"><label>Less: Loan Loss Provision</label><span style="color:#dc2626">(RWF ${n(data.assets.current.provision)})</span></div>
+      <div class="row"><label>Loan Portfolio (Net)</label><span>RWF ${n(data.assets.current.loanPortfolioNet)}</span></div>
+      <div class="row"><label>Interest Receivable</label><span>RWF ${n(data.assets.current.interestReceivable)}</span></div>
+      <div class="sub-total"><label>Total Current Assets</label><span>RWF ${n(data.assets.current.total)}</span></div>
+
+      <div class="sub-header" style="margin-top:10px">Non-Current Assets</div>
+      <div class="row"><label>Fixed Assets (Gross)</label><span>RWF ${n(data.assets.nonCurrent.fixedAssetsGross)}</span></div>
+      <div class="row indent"><label>Less: Accumulated Depreciation</label><span style="color:#dc2626">(RWF ${n(data.assets.nonCurrent.accumulatedDeprec)})</span></div>
+      <div class="row"><label>Fixed Assets (Net)</label><span>RWF ${n(data.assets.nonCurrent.fixedAssetsNet)}</span></div>
+      <div class="sub-total"><label>Total Non-Current Assets</label><span>RWF ${n(data.assets.nonCurrent.total)}</span></div>
+
+      <div class="grand-total"><span>TOTAL ASSETS</span><span>RWF ${n(data.assets.total)}</span></div>
+    </div>
+
+    <!-- RIGHT: LIABILITIES + EQUITY -->
+    <div>
+      <div class="section-header">Liabilities &amp; Equity</div>
+
+      <div class="sub-header">Current Liabilities</div>
+      ${data.assets.current.cashAndBank < 0 ? `<div class="row"><label>Bank Overdraft</label><span style="color:#dc2626">RWF ${n(Math.abs(data.assets.current.cashAndBank))}</span></div>` : ""}
+      <div class="row"><label>Accounts Payable (Unpaid Expenses)</label><span>RWF ${n(data.liabilities.current.accountsPayable)}</span></div>
+      ${data.liabilities.current.loansPayable.map((l) =>
+        `<div class="row"><label>Loan Payable — ${l.name}</label><span>RWF ${n(l.amount)}</span></div>`
+      ).join("")}
+      <div class="sub-total"><label>Total Liabilities</label><span>RWF ${n(data.liabilities.total)}</span></div>
+
+      <div class="sub-header" style="margin-top:10px">Equity</div>
+      <div class="row"><label>Retained Earnings / Capital</label><span>RWF ${n(data.equity.retainedEarnings)}</span></div>
+      <div class="row"><label>${isProfit ? "Net Profit" : "Net Loss"} (Period)</label>
+        <span style="color:${isProfit ? "#166534" : "#dc2626"}">${isProfit ? "" : "("}RWF ${n(Math.abs(data.equity.netProfitLoss))}${isProfit ? "" : ")"}</span>
+      </div>
+      <div class="sub-total"><label>Total Equity</label><span>RWF ${n(data.equity.total)}</span></div>
+
+      <div class="grand-total"><span>TOTAL LIABILITIES + EQUITY</span><span>RWF ${n(data.liabilities.total + data.equity.total)}</span></div>
+
+      ${data.balanced
+        ? `<div class="note" style="background:#f0fdf4;border-color:#16a34a;color:#166534;margin-top:8px">✓ Balance sheet is balanced — Assets = Liabilities + Equity</div>`
+        : `<div class="note" style="background:#fef2f2;border-color:#fca5a5;color:#dc2626;margin-top:8px">⚠ Balance sheet is out of balance. Review equity / retained earnings.</div>`
+      }
+    </div>
+  </div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script>
+  function downloadPDF(){
+    var btn=document.getElementById('dlBtn');
+    btn.disabled=true;btn.textContent='Generating…';
+    html2pdf().set({
+      margin:[12,12,12,12],
+      filename:'Balance-Sheet-${new Date().toISOString().slice(0,10)}.pdf',
+      image:{type:'jpeg',quality:0.98},
+      html2canvas:{scale:2,useCORS:true,logging:false},
+      jsPDF:{unit:'mm',format:'a4',orientation:'portrait'}
+    }).from(document.getElementById('content')).save().then(function(){
+      btn.disabled=false;btn.textContent='⬇ Download PDF';
+    });
+  }
+  window.onload=()=>window.print();
+</script>
+</body></html>`;
+
+  const w = window.open("", "_blank", "width=880,height=750");
+  if (!w) return;
+  w.document.write(html);
+  w.document.close();
+}
+
+function BalanceSheetTab({ from, to }: { from: string; to: string }) {
+  const [data,    setData]    = useState<BSData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error,   setError]   = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true); setError("");
+    try {
+      const params = new URLSearchParams({ from, to });
+      const res = await apiFetch(`/api/v1/reports/balance-sheet?${params}`);
+      if (!res.ok) { setError("Failed to load balance sheet."); return; }
+      const json = await res.json();
+      setData(json.data);
+    } catch { setError("Network error."); }
+    finally { setLoading(false); }
+  }, [from, to]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const isProfit = (data?.equity.netProfitLoss ?? 0) >= 0;
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+      {/* Banner */}
+      <div className="flex items-center justify-between bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl px-5 py-3.5">
+        <div className="flex items-center gap-3">
+          <FileText className="w-5 h-5 text-green-700 dark:text-green-400 shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-green-900 dark:text-green-200">Balance Sheet</p>
+            <p className="text-xs text-green-700/70 dark:text-green-400/70">
+              Statement of financial position — Assets = Liabilities + Equity
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={() => data && downloadBalanceSheet(data)}
+          disabled={!data}
+          className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl bg-green-700 hover:bg-green-800 text-white transition-colors disabled:opacity-60 shrink-0"
+        >
+          <Download className="w-4 h-4" />
+          Download PDF
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="w-6 h-6 animate-spin text-green-600" />
+        </div>
+      ) : error ? (
+        <div className="flex flex-col items-center justify-center py-20 gap-3">
+          <AlertTriangle className="w-8 h-8 text-red-500" />
+          <p className="text-sm text-gray-600 dark:text-gray-400">{error}</p>
+          <Button variant="outline" onClick={load}>Retry</Button>
+        </div>
+      ) : data && (
+        <>
+          {/* Balance check */}
+          <div className={cn(
+            "flex items-center gap-3 px-4 py-3 rounded-xl border text-sm font-medium",
+            data.balanced
+              ? "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300"
+              : "bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300"
+          )}>
+            {data.balanced ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertTriangle className="w-4 h-4 shrink-0" />}
+            {data.balanced
+              ? "Balance sheet is balanced — Total Assets equal Total Liabilities + Equity."
+              : "Balance sheet is out of balance. Retained earnings may need adjustment."}
+          </div>
+
+          {/* Two-column layout */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+            {/* ── ASSETS ── */}
+            <div className="space-y-0 rounded-xl overflow-hidden border border-gray-200 dark:border-gray-800">
+              <div className="bg-gray-800 dark:bg-gray-950 text-white px-4 py-2.5 text-xs font-bold uppercase tracking-wider">
+                Assets
+              </div>
+
+              {/* Current assets */}
+              <div className="bg-emerald-50 dark:bg-emerald-900/20 px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+                Current Assets
+              </div>
+              {[
+                { label: "Cash & Bank Balance",      value: data.assets.current.cashAndBank,       color: "text-gray-900 dark:text-gray-100" },
+                { label: "Loan Portfolio (Gross)",   value: data.assets.current.loanPortfolioGross, color: "text-gray-900 dark:text-gray-100" },
+                { label: "Less: Loan Loss Provision",value: -data.assets.current.provision,        color: "text-red-600 dark:text-red-400", indent: true },
+                { label: "Loan Portfolio (Net)",     value: data.assets.current.loanPortfolioNet,  color: "font-semibold text-gray-900 dark:text-gray-100" },
+                { label: "Interest Receivable",      value: data.assets.current.interestReceivable, color: "text-gray-900 dark:text-gray-100" },
+              ].map((r) => (
+                <div key={r.label} className={cn("flex justify-between items-center px-4 py-2 border-b border-gray-100 dark:border-gray-800 text-xs", r.indent && "pl-8")}>
+                  <span className="text-gray-600 dark:text-gray-400">{r.label}</span>
+                  <span className={cn("font-medium", r.color)}>
+                    {r.value < 0 ? `(${fmt(Math.abs(r.value))})` : fmt(Math.abs(r.value))}
+                  </span>
+                </div>
+              ))}
+              <div className="flex justify-between items-center px-4 py-2.5 bg-emerald-50 dark:bg-emerald-900/20 text-xs font-bold border-b border-emerald-200 dark:border-emerald-800">
+                <span className="text-gray-800 dark:text-gray-200">Total Current Assets</span>
+                <span className="text-emerald-700 dark:text-emerald-400">{fmt(data.assets.current.total)}</span>
+              </div>
+
+              {/* Non-current assets */}
+              <div className="bg-emerald-50 dark:bg-emerald-900/20 px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+                Non-Current Assets
+              </div>
+              {[
+                { label: "Fixed Assets (Gross)",        value: data.assets.nonCurrent.fixedAssetsGross,  color: "text-gray-900 dark:text-gray-100" },
+                { label: "Less: Accumulated Depreciation", value: -data.assets.nonCurrent.accumulatedDeprec, color: "text-red-600 dark:text-red-400", indent: true },
+                { label: "Fixed Assets (Net)",          value: data.assets.nonCurrent.fixedAssetsNet,   color: "font-semibold text-gray-900 dark:text-gray-100" },
+              ].map((r) => (
+                <div key={r.label} className={cn("flex justify-between items-center px-4 py-2 border-b border-gray-100 dark:border-gray-800 text-xs", r.indent && "pl-8")}>
+                  <span className="text-gray-600 dark:text-gray-400">{r.label}</span>
+                  <span className={cn("font-medium", r.color)}>
+                    {r.value < 0 ? `(${fmt(Math.abs(r.value))})` : fmt(Math.abs(r.value))}
+                  </span>
+                </div>
+              ))}
+              <div className="flex justify-between items-center px-4 py-2.5 bg-emerald-50 dark:bg-emerald-900/20 text-xs font-bold border-b border-emerald-200 dark:border-emerald-800">
+                <span className="text-gray-800 dark:text-gray-200">Total Non-Current Assets</span>
+                <span className="text-emerald-700 dark:text-emerald-400">{fmt(data.assets.nonCurrent.total)}</span>
+              </div>
+
+              {/* Grand total */}
+              <div className="flex justify-between items-center px-4 py-3 bg-gray-800 dark:bg-gray-950 text-white text-sm font-bold">
+                <span>TOTAL ASSETS</span>
+                <span>{fmt(data.assets.total)}</span>
+              </div>
+            </div>
+
+            {/* ── LIABILITIES + EQUITY ── */}
+            <div className="space-y-0 rounded-xl overflow-hidden border border-gray-200 dark:border-gray-800">
+              <div className="bg-gray-800 dark:bg-gray-950 text-white px-4 py-2.5 text-xs font-bold uppercase tracking-wider">
+                Liabilities &amp; Equity
+              </div>
+
+              {/* Liabilities */}
+              <div className="bg-red-50 dark:bg-red-900/20 px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-red-700 dark:text-red-400">
+                Liabilities
+              </div>
+              {data.assets.current.cashAndBank < 0 && (
+                <div className="flex justify-between items-center px-4 py-2 border-b border-gray-100 dark:border-gray-800 text-xs">
+                  <span className="text-gray-600 dark:text-gray-400">Bank Overdraft</span>
+                  <span className="font-medium text-red-600 dark:text-red-400">{fmt(Math.abs(data.assets.current.cashAndBank))}</span>
+                </div>
+              )}
+              <div className="flex justify-between items-center px-4 py-2 border-b border-gray-100 dark:border-gray-800 text-xs">
+                <span className="text-gray-600 dark:text-gray-400">Accounts Payable (Unpaid Expenses)</span>
+                <span className="font-medium text-gray-900 dark:text-gray-100">{fmt(data.liabilities.current.accountsPayable)}</span>
+              </div>
+              {data.liabilities.current.loansPayable.map((l) => (
+                <div key={l.name} className="flex justify-between items-center px-4 py-2 border-b border-gray-100 dark:border-gray-800 text-xs">
+                  <span className="text-gray-600 dark:text-gray-400">Loan Payable — {l.name}</span>
+                  <span className="font-medium text-gray-900 dark:text-gray-100">{fmt(l.amount)}</span>
+                </div>
+              ))}
+              <div className="flex justify-between items-center px-4 py-2.5 bg-red-50 dark:bg-red-900/20 text-xs font-bold border-b border-red-200 dark:border-red-800">
+                <span className="text-gray-800 dark:text-gray-200">Total Liabilities</span>
+                <span className="text-red-700 dark:text-red-400">{fmt(data.liabilities.total)}</span>
+              </div>
+
+              {/* Equity */}
+              <div className="bg-blue-50 dark:bg-blue-900/20 px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-blue-700 dark:text-blue-400">
+                Equity
+              </div>
+              <div className="flex justify-between items-center px-4 py-2 border-b border-gray-100 dark:border-gray-800 text-xs">
+                <span className="text-gray-600 dark:text-gray-400">Retained Earnings / Capital</span>
+                <span className="font-medium text-gray-900 dark:text-gray-100">{fmt(data.equity.retainedEarnings)}</span>
+              </div>
+              <div className="flex justify-between items-center px-4 py-2 border-b border-gray-100 dark:border-gray-800 text-xs">
+                <span className="text-gray-600 dark:text-gray-400">
+                  {isProfit ? "Net Profit" : "Net Loss"} (Period)
+                </span>
+                <span className={cn("font-medium", isProfit ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>
+                  {!isProfit && "("}
+                  {fmt(Math.abs(data.equity.netProfitLoss))}
+                  {!isProfit && ")"}
+                </span>
+              </div>
+              <div className="flex justify-between items-center px-4 py-2.5 bg-blue-50 dark:bg-blue-900/20 text-xs font-bold border-b border-blue-200 dark:border-blue-800">
+                <span className="text-gray-800 dark:text-gray-200">Total Equity</span>
+                <span className="text-blue-700 dark:text-blue-400">{fmt(data.equity.total)}</span>
+              </div>
+
+              {/* Grand total */}
+              <div className="flex justify-between items-center px-4 py-3 bg-gray-800 dark:bg-gray-950 text-white text-sm font-bold">
+                <span>TOTAL LIABILITIES + EQUITY</span>
+                <span>{fmt(data.liabilities.total + data.equity.total)}</span>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </motion.div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
-const TABS = ["Overview", "Income & Expenses", "Payment Schedule"] as const;
+const TABS = ["Overview", "Income & Expenses", "Payment Schedule", "Trial Balance", "Balance Sheet"] as const;
 type Tab = typeof TABS[number];
 
 export default function ReportsPage() {
@@ -1252,11 +1994,11 @@ export default function ReportsPage() {
       </div>
 
       {/* Content */}
-      {loading && tab !== "Payment Schedule" ? (
+      {loading && tab !== "Payment Schedule" && tab !== "Trial Balance" && tab !== "Balance Sheet" ? (
         <div className="flex items-center justify-center py-20">
           <Loader2 className="w-6 h-6 animate-spin text-green-600" />
         </div>
-      ) : error && tab !== "Payment Schedule" ? (
+      ) : error && tab !== "Payment Schedule" && tab !== "Trial Balance" && tab !== "Balance Sheet" ? (
         <div className="flex flex-col items-center justify-center py-20 gap-3">
           <AlertTriangle className="w-8 h-8 text-red-500" />
           <p className="text-sm text-gray-600 dark:text-gray-400">{error}</p>
@@ -1268,6 +2010,10 @@ export default function ReportsPage() {
         <IncomeTab data={summary} />
       ) : tab === "Payment Schedule" ? (
         <ScheduleTab from={from} to={to} />
+      ) : tab === "Trial Balance" ? (
+        <TrialBalanceTab from={from} to={to} />
+      ) : tab === "Balance Sheet" ? (
+        <BalanceSheetTab from={from} to={to} />
       ) : null}
     </div>
   );

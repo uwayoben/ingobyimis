@@ -427,6 +427,7 @@ export default function NewLoanPage() {
     e.preventDefault();
     setError("");
     if (!form.customerId) { setError("Please select a customer."); return; }
+    if (!form.economicSector) { setError("Please select an economic sector."); return; }
     setLoading(true);
 
     const fees = [];
@@ -443,7 +444,7 @@ export default function NewLoanPage() {
         body:    JSON.stringify({
           customerId:             form.customerId,
           purpose:                form.purpose,
-          economicSector:         form.economicSector || undefined,
+          economicSector:         form.economicSector,
           branchName:             form.branchName || undefined,
           amount:                 form.principal,
           annualInterestRate:     (parseFloat(form.monthlyRate) || 0) * 12,
@@ -816,16 +817,17 @@ export default function NewLoanPage() {
             {/* 6. Purpose & Notes */}
             <Section title="Purpose & Notes" defaultOpen={true}>
               <Select
-                label="Economic Sector"
+                label="Economic Sector *"
                 value={form.economicSector}
                 onChange={(e) => set("economicSector", e.target.value)}
+                required
                 options={[
                   { value: "", label: "— Select sector —" },
-                  { value: "71.Agriculture, Livestock, Fishing",                              label: "71. Agriculture, Livestock, Fishing" },
-                  { value: "72.Public Works (Construction), Buildings, Residences/Homes",    label: "72. Public Works (Construction), Buildings, Residences/Homes" },
-                  { value: "73.Commerce, Restaurants, Hotels",                               label: "73. Commerce, Restaurants, Hotels" },
-                  { value: "74.Transport, Warehouses, Communications",                       label: "74. Transport, Warehouses, Communications" },
-                  { value: "75.Others",                                                      label: "75. Others" },
+                  { value: "Agriculture, Livestock, Fishing",                              label: "Agriculture, Livestock, Fishing" },
+                  { value: "Public Works (Construction), Buildings, Residences/Homes",    label: "Public Works (Construction), Buildings, Residences/Homes" },
+                  { value: "Commerce, Restaurants, Hotels",                               label: "Commerce, Restaurants, Hotels" },
+                  { value: "Transport, Warehouses, Communications",                       label: "Transport, Warehouses, Communications" },
+                  { value: "Others",                                                      label: "Others" },
                 ]}
               />
               <div className="space-y-1">

@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Shield, Building2, BarChart3, Users, Globe, UserPlus, Loader2, ChevronDown, Bell, Send, ClipboardList, CheckCircle, XCircle, AlertCircle, LogIn, Search, ChevronLeft, ChevronRight, Trash2, TriangleAlert, Ban, LockOpen } from "lucide-react";
+import { Plus, Shield, Building2, BarChart3, Users, Globe, UserPlus, Loader2, ChevronDown, Bell, Send, ClipboardList, CheckCircle, XCircle, AlertCircle, LogIn, Search, ChevronLeft, ChevronRight, Trash2, TriangleAlert, Ban, LockOpen, Pencil } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -616,6 +616,65 @@ function SendNotificationModal({ companies, onClose }: { companies: Company[]; o
   );
 }
 
+// ── Edit Company Modal ────────────────────────────────────────────────────────
+
+function EditCompanyModal({ company, onClose, onUpdated }: {
+  company: Company;
+  onClose: () => void;
+  onUpdated: (updated: Company) => void;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [form, setForm] = useState({
+    name: company.name,
+    email: company.email,
+    phone: company.phone,
+    address: company.address,
+  });
+
+  const set = (f: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setForm((p) => ({ ...p, [f]: e.target.value }));
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      const res = await apiFetch(`/api/v1/companies/${company.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      const json = await res.json();
+      if (!res.ok) { setError(json.error || "Failed to update company."); return; }
+      onUpdated({ ...company, ...form });
+      onClose();
+    } catch {
+      setError("Network error. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="p-6 space-y-4">
+      {error && (
+        <p className="text-xs text-red-600 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">{error}</p>
+      )}
+      <Input label="Company Name" placeholder="NDF Company Ltd" required value={form.name} onChange={set("name")} />
+      <div className="grid grid-cols-2 gap-3">
+        <Input label="Email" type="email" placeholder="info@company.rw" required value={form.email} onChange={set("email")} />
+        <Input label="Phone" placeholder="+250788000000" required value={form.phone} onChange={set("phone")} />
+      </div>
+      <Input label="Address" placeholder="KG 12 Ave, Kigali, Rwanda" required value={form.address} onChange={set("address")} />
+      <div className="flex justify-end gap-3 pt-1">
+        <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+        <Button type="submit" loading={loading} icon={<Pencil className="w-4 h-4" />}>Save Changes</Button>
+      </div>
+    </form>
+  );
+}
+
 // ── Delete Company Confirmation Modal ────────────────────────────────────────
 
 function DeleteCompanyModal({ company, onClose, onDeleted }: {
@@ -706,6 +765,7 @@ export default function AdminPage() {
   const [showAddCompany, setShowAddCompany] = useState(false);
   const [selectedCompany, setSelectedCompany] = useState<Company | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Company | null>(null);
+  const [editTarget, setEditTarget] = useState<Company | null>(null);
   const [showSendNotif, setShowSendNotif] = useState(false);
   const [activeTab, setActiveTab] = useState<"companies" | "audit">("companies");
   const [togglingId, setTogglingId] = useState<string | null>(null);
@@ -860,6 +920,7 @@ export default function AdminPage() {
                 onManageUsers={() => setSelectedCompany(company)}
                 onToggleStatus={() => handleToggleStatus(company)}
                 onDelete={() => setDeleteTarget(company)}
+                onEdit={() => setEditTarget(company)}
               />
             ))}
           </div>
@@ -896,17 +957,31 @@ export default function AdminPage() {
           />
         )}
       </Modal>
+
+      <Modal isOpen={!!editTarget} onClose={() => setEditTarget(null)} title="Edit Company Details" size="sm">
+        {editTarget && (
+          <EditCompanyModal
+            company={editTarget}
+            onClose={() => setEditTarget(null)}
+            onUpdated={(updated) => {
+              setCompanies((prev) => prev.map((c) => c.id === updated.id ? updated : c));
+              setEditTarget(null);
+            }}
+          />
+        )}
+      </Modal>
     </div>
   );
 }
 
-function CompanyCard({ company, gradient, toggling, onManageUsers, onToggleStatus, onDelete }: {
+function CompanyCard({ company, gradient, toggling, onManageUsers, onToggleStatus, onDelete, onEdit }: {
   company: Company;
   gradient: string;
   toggling: boolean;
   onManageUsers: () => void;
   onToggleStatus: () => void;
   onDelete: () => void;
+  onEdit: () => void;
 }) {
   const initials = company.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 
@@ -978,6 +1053,13 @@ function CompanyCard({ company, gradient, toggling, onManageUsers, onToggleStatu
                 ? <LockOpen className="w-3.5 h-3.5" />
                 : <Ban className="w-3.5 h-3.5" />
             }
+          </button>
+          <button
+            onClick={onEdit}
+            className="flex items-center justify-center gap-1.5 text-xs font-medium border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 px-3 py-2 rounded-xl transition-colors"
+            title="Edit company details"
+          >
+            <Pencil className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={onDelete}

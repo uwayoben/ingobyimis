@@ -4,6 +4,7 @@ import {
   Plus, TrendingDown, Package, DollarSign, BarChart3, Trash2,
   CheckCircle2, Clock, Paperclip, ExternalLink, Upload, X, FileText,
   Landmark, ArrowDownToLine, ArrowUpToLine, ArrowRightLeft, ChevronDown,
+  CreditCard, Loader2, AlertCircle,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { Card, CardHeader, CardTitle } from "@/components/ui/Card";
@@ -40,6 +41,31 @@ interface Expense {
   date:        string;
   isPaid:      boolean;
   proofUrl:    string | null;
+}
+
+interface LiabilityPayment {
+  id:          string;
+  liabilityId: string;
+  amount:      number;
+  principal:   number;
+  interest:    number;
+  date:        string;
+  notes:       string | null;
+  createdAt:   string;
+}
+
+interface Liability {
+  id:                 string;
+  lenderName:         string;
+  description:        string | null;
+  principalAmount:    number;
+  startDate:          string;
+  dueDate:            string | null;
+  balanceOutstanding: number;
+  totalPaid:          number;
+  status:             "active" | "completed";
+  payments:           LiabilityPayment[];
+  createdAt:          string;
 }
 
 interface Asset {
@@ -495,21 +521,157 @@ function AssetForm({ onSaved, onClose }: { onSaved: (a: Asset) => void; onClose:
   );
 }
 
+// ── Add Liability Form ────────────────────────────────────────────────────────
+
+function AddLiabilityForm({ onSaved, onClose }: { onSaved: (l: Liability) => void; onClose: () => void }) {
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState("");
+  const [form, setForm] = useState({ lenderName: "", description: "", principalAmount: "", startDate: "", dueDate: "" });
+
+  const set = (f: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+    setForm((p) => ({ ...p, [f]: e.target.value }));
+
+  const handleSubmit = async (ev: React.FormEvent) => {
+    ev.preventDefault();
+    setError(""); setLoading(true);
+    try {
+      const res  = await apiFetch("/api/v1/liabilities", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ ...form, principalAmount: Number(form.principalAmount) }),
+      });
+      const json = await res.json();
+      if (!res.ok) { setError(json.error ?? "Failed to save."); return; }
+      onSaved(json.data);
+    } catch { setError("Network error."); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="p-6 space-y-4">
+      {error && <p className="text-sm text-red-600 bg-red-50 dark:bg-red-900/20 px-3 py-2 rounded-lg">{error}</p>}
+      <Input label="Lender / Creditor Name" placeholder="e.g. Bank of Kigali" value={form.lenderName} onChange={set("lenderName")} required />
+      <Input label="Principal Amount (RWF)" type="number" min={1} placeholder="5000000" value={form.principalAmount} onChange={set("principalAmount")} required />
+      <div className="grid grid-cols-2 gap-3">
+        <Input label="Start Date" type="date" value={form.startDate} onChange={set("startDate")} required />
+        <Input label="Due Date (optional)" type="date" value={form.dueDate} onChange={set("dueDate")} />
+      </div>
+      <div className="space-y-1">
+        <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">Description (optional)</label>
+        <textarea
+          value={form.description}
+          onChange={set("description")}
+          rows={2}
+          placeholder="e.g. BK business loan for working capital"
+          className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
+        />
+      </div>
+      <div className="flex justify-end gap-3 pt-1">
+        <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+        <Button type="submit" loading={loading} icon={<CreditCard className="w-4 h-4" />}>Record Liability</Button>
+      </div>
+    </form>
+  );
+}
+
+// ── Record Payment Form ───────────────────────────────────────────────────────
+
+function RecordPaymentForm({ liability, onSaved, onClose }: { liability: Liability; onSaved: (l: Liability) => void; onClose: () => void }) {
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState("");
+  const [form, setForm] = useState({ amount: "", principal: "", interest: "", date: "", notes: "" });
+
+  const set = (f: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+    setForm((p) => ({ ...p, [f]: e.target.value }));
+
+  const totalCheck = (Number(form.principal) || 0) + (Number(form.interest) || 0);
+  const mismatch   = form.amount && form.principal && form.interest && totalCheck !== Number(form.amount);
+
+  const handleSubmit = async (ev: React.FormEvent) => {
+    ev.preventDefault();
+    setError(""); setLoading(true);
+    try {
+      const res  = await apiFetch(`/api/v1/liabilities/${liability.id}/payments`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({
+          amount:    Number(form.amount),
+          principal: Number(form.principal || 0),
+          interest:  Number(form.interest  || 0),
+          date:      form.date,
+          notes:     form.notes || undefined,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) { setError(json.error ?? "Failed to save."); return; }
+      onSaved(json.data.liability);
+    } catch { setError("Network error."); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="p-6 space-y-4">
+      {error && <p className="text-sm text-red-600 bg-red-50 dark:bg-red-900/20 px-3 py-2 rounded-lg">{error}</p>}
+
+      {/* Liability info */}
+      <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-4 text-sm space-y-1.5">
+        <p className="font-semibold text-gray-900 dark:text-gray-100">{liability.lenderName}</p>
+        <div className="flex items-center justify-between text-xs text-gray-500">
+          <span>Outstanding balance</span>
+          <span className="font-bold text-red-600 dark:text-red-400">{formatCurrency(liability.balanceOutstanding)}</span>
+        </div>
+      </div>
+
+      <Input label="Total Payment Amount (RWF)" type="number" min={1} placeholder="500000" value={form.amount} onChange={set("amount")} required />
+      <div className="grid grid-cols-2 gap-3">
+        <Input label="Principal Portion (RWF)" type="number" min={0} placeholder="400000" value={form.principal} onChange={set("principal")} />
+        <Input label="Interest Portion (RWF)"  type="number" min={0} placeholder="100000"  value={form.interest}  onChange={set("interest")}  />
+      </div>
+      {mismatch && (
+        <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
+          <AlertCircle className="w-3.5 h-3.5" />
+          Principal + Interest ({formatCurrency(totalCheck)}) does not equal total amount ({formatCurrency(Number(form.amount))})
+        </p>
+      )}
+      <Input label="Payment Date" type="date" value={form.date} onChange={set("date")} required />
+      <div className="space-y-1">
+        <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">Notes (optional)</label>
+        <textarea
+          value={form.notes}
+          onChange={set("notes")}
+          rows={2}
+          placeholder="e.g. Instalment 3 of 12"
+          className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
+        />
+      </div>
+      <p className="text-xs text-gray-400">This payment will automatically be recorded as an expense.</p>
+      <div className="flex justify-end gap-3 pt-1">
+        <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+        <Button type="submit" loading={loading} icon={<CheckCircle2 className="w-4 h-4" />}>Record Payment</Button>
+      </div>
+    </form>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function AccountingPage() {
   const { role } = useRole();
-  const [tab,              setTab]              = useState<"expenses" | "assets" | "ledger">("expenses");
+  const [tab,              setTab]              = useState<"expenses" | "assets" | "ledger" | "liabilities">("expenses");
   const [expenses,         setExpenses]         = useState<Expense[]>([]);
   const [assets,           setAssets]           = useState<Asset[]>([]);
   const [ledgerEntries,    setLedgerEntries]    = useState<LedgerEntry[]>([]);
+  const [liabilities,      setLiabilities]      = useState<Liability[]>([]);
   const [accountBalance,   setAccountBalance]   = useState<number>(0);
   const [loadingExpenses,  setLoadingExpenses]  = useState(true);
   const [loadingAssets,    setLoadingAssets]    = useState(true);
   const [loadingLedger,    setLoadingLedger]    = useState(true);
-  const [showExpenseModal, setShowExpenseModal] = useState(false);
-  const [showAssetModal,   setShowAssetModal]   = useState(false);
-  const [showDepositModal, setShowDepositModal] = useState(false);
+  const [loadingLiabilities, setLoadingLiabilities] = useState(true);
+  const [showExpenseModal,   setShowExpenseModal]   = useState(false);
+  const [showAssetModal,     setShowAssetModal]     = useState(false);
+  const [showDepositModal,   setShowDepositModal]   = useState(false);
+  const [showLiabilityModal, setShowLiabilityModal] = useState(false);
+  const [paymentTarget,      setPaymentTarget]      = useState<Liability | null>(null);
   const [deletingId,         setDeletingId]         = useState<string | null>(null);
   const [deletingAssetId,    setDeletingAssetId]    = useState<string | null>(null);
   const [markPaidExpense,    setMarkPaidExpense]    = useState<Expense | null>(null);
@@ -549,9 +711,18 @@ export default function AccountingPage() {
     } finally { setLoadingLedger(false); }
   }, []);
 
-  useEffect(() => { fetchExpenses(); }, [fetchExpenses]);
-  useEffect(() => { fetchAssets();   }, [fetchAssets]);
-  useEffect(() => { fetchLedger();   }, [fetchLedger]);
+  const fetchLiabilities = useCallback(async () => {
+    setLoadingLiabilities(true);
+    try {
+      const res = await apiFetch("/api/v1/liabilities");
+      if (res.ok) { const json = await res.json(); setLiabilities(json.data ?? []); }
+    } finally { setLoadingLiabilities(false); }
+  }, []);
+
+  useEffect(() => { fetchExpenses(); },    [fetchExpenses]);
+  useEffect(() => { fetchAssets();   },    [fetchAssets]);
+  useEffect(() => { fetchLedger();   },    [fetchLedger]);
+  useEffect(() => { fetchLiabilities(); }, [fetchLiabilities]);
 
   const handleDeleteExpense = async (id: string) => {
     if (!confirm("Delete this expense? This cannot be undone.")) return;
@@ -713,6 +884,14 @@ export default function AccountingPage() {
               <Plus className="w-4 h-4" /> Add Asset
             </button>
           )}
+          {tab === "liabilities" && canManageAssets && (
+            <button
+              onClick={() => setShowLiabilityModal(true)}
+              className="bg-white text-green-700 hover:bg-green-50 shadow-sm text-sm font-semibold px-4 py-2 rounded-xl inline-flex items-center gap-1.5 transition-colors"
+            >
+              <Plus className="w-4 h-4" /> Add Liability
+            </button>
+          )}
           {canDeposit && (
             <button
               onClick={() => setShowDepositModal(true)}
@@ -727,9 +906,10 @@ export default function AccountingPage() {
       {/* Tabs */}
       <div className="flex gap-1 p-1 bg-gray-100 dark:bg-gray-800 rounded-xl w-fit">
         {[
-          { label: "Expenses", value: "expenses" as const, icon: <TrendingDown    className="w-3.5 h-3.5" />, visible: true },
-          { label: "Assets",   value: "assets"   as const, icon: <Package         className="w-3.5 h-3.5" />, visible: !isReceptionist },
-          { label: "Ledger",   value: "ledger"   as const, icon: <ArrowRightLeft  className="w-3.5 h-3.5" />, visible: !isReceptionist },
+          { label: "Expenses",    value: "expenses"    as const, icon: <TrendingDown   className="w-3.5 h-3.5" />, visible: true },
+          { label: "Liabilities", value: "liabilities" as const, icon: <CreditCard    className="w-3.5 h-3.5" />, visible: !isReceptionist },
+          { label: "Assets",      value: "assets"      as const, icon: <Package        className="w-3.5 h-3.5" />, visible: !isReceptionist },
+          { label: "Ledger",      value: "ledger"      as const, icon: <ArrowRightLeft className="w-3.5 h-3.5" />, visible: !isReceptionist },
         ].filter((t) => t.visible).map((t) => (
           <button
             key={t.value}
@@ -899,6 +1079,166 @@ export default function AccountingPage() {
               )}
             </div>
           </Card>
+        </motion.div>
+      )}
+
+      {/* ── Liabilities Tab ── */}
+      {tab === "liabilities" && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-5">
+          {/* KPI cards */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            {[
+              {
+                label:  "Total Borrowed",
+                value:  formatCurrency(liabilities.reduce((s, l) => s + l.principalAmount, 0)),
+                border: "border-l-blue-500",
+                iconBg: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
+                icon:   <CreditCard className="w-5 h-5" />,
+              },
+              {
+                label:  "Outstanding Balance",
+                value:  formatCurrency(liabilities.reduce((s, l) => s + l.balanceOutstanding, 0)),
+                border: "border-l-red-500",
+                iconBg: "bg-red-500/15 text-red-600 dark:text-red-400",
+                icon:   <TrendingDown className="w-5 h-5" />,
+              },
+              {
+                label:  "Total Repaid",
+                value:  formatCurrency(liabilities.reduce((s, l) => s + l.totalPaid, 0)),
+                border: "border-l-emerald-500",
+                iconBg: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+                icon:   <CheckCircle2 className="w-5 h-5" />,
+              },
+              {
+                label:  "Active Liabilities",
+                value:  String(liabilities.filter((l) => l.status === "active").length),
+                border: "border-l-amber-500",
+                iconBg: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+                icon:   <BarChart3 className="w-5 h-5" />,
+              },
+            ].map((stat, i) => (
+              <motion.div
+                key={stat.label}
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: i * 0.06 }}
+                className={cn("bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 border-l-4 p-4", stat.border)}
+              >
+                <div className={cn("w-9 h-9 rounded-xl flex items-center justify-center mb-3", stat.iconBg)}>{stat.icon}</div>
+                <p className="text-xl font-bold text-gray-900 dark:text-white">{stat.value}</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{stat.label}</p>
+              </motion.div>
+            ))}
+          </div>
+
+          {/* Liabilities list */}
+          {loadingLiabilities ? (
+            <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-green-600" /></div>
+          ) : liabilities.length === 0 ? (
+            <div className="bg-white dark:bg-gray-900 rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 p-12 text-center">
+              <CreditCard className="w-8 h-8 mx-auto text-gray-300 mb-3" />
+              <p className="text-sm text-gray-400">No liabilities recorded yet.</p>
+              <p className="text-xs text-gray-400 mt-1">Click "Add Liability" to record a company loan.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {liabilities.map((lib, i) => {
+                const pct = lib.principalAmount > 0
+                  ? Math.min(100, Math.round((lib.totalPaid / lib.principalAmount) * 100))
+                  : 0;
+                return (
+                  <motion.div
+                    key={lib.id}
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.05 }}
+                    className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 p-5"
+                  >
+                    <div className="flex items-start justify-between gap-4 mb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center shrink-0">
+                          <Landmark className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-bold text-gray-900 dark:text-gray-100">{lib.lenderName}</p>
+                          {lib.description && <p className="text-xs text-gray-400 mt-0.5">{lib.description}</p>}
+                          <p className="text-xs text-gray-400 mt-0.5">Started {formatDate(lib.startDate)}{lib.dueDate ? ` · Due ${formatDate(lib.dueDate)}` : ""}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className={cn(
+                          "text-xs font-semibold px-2.5 py-0.5 rounded-full",
+                          lib.status === "completed"
+                            ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400"
+                            : "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
+                        )}>
+                          {lib.status === "completed" ? "Completed" : "Active"}
+                        </span>
+                        {lib.status === "active" && (
+                          <button
+                            onClick={() => setPaymentTarget(lib)}
+                            className="flex items-center gap-1.5 text-xs font-semibold bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-xl transition-colors"
+                          >
+                            <Plus className="w-3.5 h-3.5" /> Record Payment
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Amounts row */}
+                    <div className="grid grid-cols-3 gap-3 mb-4">
+                      <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3 text-center">
+                        <p className="text-xs text-gray-400 mb-1">Principal</p>
+                        <p className="text-sm font-bold text-gray-900 dark:text-gray-100">{formatCurrency(lib.principalAmount)}</p>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3 text-center">
+                        <p className="text-xs text-gray-400 mb-1">Total Repaid</p>
+                        <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(lib.totalPaid)}</p>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3 text-center">
+                        <p className="text-xs text-gray-400 mb-1">Outstanding</p>
+                        <p className={cn("text-sm font-bold", lib.balanceOutstanding > 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400")}>
+                          {formatCurrency(lib.balanceOutstanding)}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Progress bar */}
+                    <div className="mb-4">
+                      <div className="flex justify-between text-xs text-gray-400 mb-1">
+                        <span>Repayment progress</span>
+                        <span>{pct}%</span>
+                      </div>
+                      <div className="h-2 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-emerald-500 transition-all"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Payment history */}
+                    {lib.payments.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">Payment History</p>
+                        <div className="space-y-1.5">
+                          {lib.payments.map((p) => (
+                            <div key={p.id} className="flex items-center justify-between text-xs py-1.5 border-b border-gray-50 dark:border-gray-800 last:border-0">
+                              <span className="text-gray-500 dark:text-gray-400">{formatDate(p.date)}</span>
+                              <span className="text-gray-600 dark:text-gray-300">
+                                Principal: {formatCurrency(p.principal)} · Interest: {formatCurrency(p.interest)}
+                              </span>
+                              <span className="font-semibold text-emerald-600 dark:text-emerald-400">{formatCurrency(p.amount)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </motion.div>
+                );
+              })}
+            </div>
+          )}
         </motion.div>
       )}
 
@@ -1169,7 +1509,28 @@ export default function AccountingPage() {
             onUpdated={(updated) => {
               setExpenses((p) => p.map((e) => e.id === updated.id ? updated : e));
               setMarkPaidExpense(null);
-              fetchLedger(); // refresh balance after expense paid
+              fetchLedger();
+            }}
+          />
+        )}
+      </Modal>
+
+      <Modal isOpen={showLiabilityModal} onClose={() => setShowLiabilityModal(false)} title="Record Company Liability" size="sm">
+        <AddLiabilityForm
+          onClose={() => setShowLiabilityModal(false)}
+          onSaved={(l) => { setLiabilities((p) => [l, ...p]); setShowLiabilityModal(false); }}
+        />
+      </Modal>
+
+      <Modal isOpen={!!paymentTarget} onClose={() => setPaymentTarget(null)} title="Record Liability Payment" size="sm">
+        {paymentTarget && (
+          <RecordPaymentForm
+            liability={paymentTarget}
+            onClose={() => setPaymentTarget(null)}
+            onSaved={(updated) => {
+              setLiabilities((p) => p.map((l) => l.id === updated.id ? updated : l));
+              setPaymentTarget(null);
+              fetchExpenses(); // refresh expenses list since a new one was auto-created
             }}
           />
         )}
