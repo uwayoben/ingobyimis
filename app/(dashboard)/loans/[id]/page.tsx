@@ -1829,53 +1829,102 @@ function RestructureForm({ loan, onClose, onSaved }: {
 
 // ── Edit Loan Form (super_admin only) ────────────────────────────────────────
 function EditLoanForm({ loan, onClose, onSaved }: { loan: Loan & { customer?: any }; onClose: () => void; onSaved: () => void }) {
-  const [purpose,     setPurpose]     = useState(loan.purpose);
-  const [amount,      setAmount]      = useState(String(loan.amount));
-  const [rate,        setRate]        = useState(String(loan.annualInterestRate / 12));
-  const [method,      setMethod]      = useState<"flat" | "declining">(loan.interestMethod as any);
-  const [installments,setInstallments]= useState(String(loan.totalInstallments));
-  const [freqDays,    setFreqDays]    = useState(String(loan.repaymentFrequencyDays));
-  const [grace,       setGrace]       = useState(String(loan.gracePeriodDays ?? 0));
-  const [branch,      setBranch]      = useState(loan.branchName ?? "");
-  const [mgmtRate,    setMgmtRate]    = useState(String(Number(loan.managementFeeRate) / (360 / loan.repaymentFrequencyDays) * 100 / 100));
-  const [procRate,    setProcRate]    = useState(String(Number((loan as any).processingFeeRate ?? 0) / (360 / loan.repaymentFrequencyDays) * 100 / 100));
-  const [penaltyRate, setPenaltyRate] = useState(String(Number((loan as any).penaltyRatePerDay ?? 0)));
-  const [loading,     setLoading]     = useState(false);
-  const [error,       setError]       = useState("");
+  const [tab, setTab] = useState<"terms" | "balances">("terms");
+  const [error, setError] = useState("");
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  // ── Terms ──────────────────────────────────────────────────────────────────
+  const [purpose,      setPurpose]      = useState(loan.purpose);
+  const [amount,       setAmount]       = useState(String(loan.amount));
+  const [rate,         setRate]         = useState(String(loan.annualInterestRate / 12));
+  const [method,       setMethod]       = useState<"flat" | "declining">(loan.interestMethod as any);
+  const [installments, setInstallments] = useState(String(loan.totalInstallments));
+  const [freqDays,     setFreqDays]     = useState(String(loan.repaymentFrequencyDays));
+  const [grace,        setGrace]        = useState(String(loan.gracePeriodDays ?? 0));
+  const [branch,       setBranch]       = useState(loan.branchName ?? "");
+  const [mgmtRate,     setMgmtRate]     = useState(String(Number(loan.managementFeeRate) / (360 / loan.repaymentFrequencyDays)));
+  const [procRate,     setProcRate]     = useState(String(Number((loan as any).processingFeeRate ?? 0) / (360 / loan.repaymentFrequencyDays)));
+  const [penaltyRate,  setPenaltyRate]  = useState(String(Number((loan as any).penaltyRatePerDay ?? 0)));
+  const [termsLoading, setTermsLoading] = useState(false);
+
+  // ── Balances ────────────────────────────────────────────────────────────────
+  const [loanStatus,     setLoanStatus]     = useState(loan.status);
+  const [balOutstanding, setBalOutstanding] = useState(String(loan.balanceOutstanding));
+  const [repaidPrincipal,setRepaidPrincipal]= useState(String(loan.amountRepaidPrincipal));
+  const [repaidInterest, setRepaidInterest] = useState(String(loan.amountRepaidInterest));
+  const [repaidMgmtFee,  setRepaidMgmtFee]  = useState(String(loan.amountRepaidMgmtFee ?? 0));
+  const [repaidProcFee,  setRepaidProcFee]  = useState(String(loan.amountRepaidProcessingFee ?? 0));
+  const [totIntSched,    setTotIntSched]    = useState(String(loan.totalInterestScheduled ?? 0));
+  const [totMgmtSched,   setTotMgmtSched]   = useState(String(loan.totalMgmtFeeScheduled ?? 0));
+  const [totProcSched,   setTotProcSched]   = useState(String(loan.totalProcessingFeeScheduled ?? 0));
+  const [instPaid,       setInstPaid]       = useState(String(loan.installmentsPaid));
+  const [penaltyAmt,     setPenaltyAmt]     = useState(String(loan.penaltyAmount));
+  const [penaltyPaidAmt, setPenaltyPaidAmt] = useState(String(loan.penaltyPaid ?? 0));
+  const [totalRepayable, setTotalRepayable] = useState(String(loan.totalRepayable));
+  const [disbDate,       setDisbDate]       = useState(loan.disbursementDate   ? new Date(loan.disbursementDate).toISOString().slice(0, 10)   : "");
+  const [maturityDate,   setMaturityDate]   = useState(loan.agreedMaturityDate ? new Date(loan.agreedMaturityDate).toISOString().slice(0, 10) : "");
+  const [nextPmtDate,    setNextPmtDate]    = useState(loan.nextPaymentDate    ? new Date(loan.nextPaymentDate).toISOString().slice(0, 10)    : "");
+  const [balLoading,     setBalLoading]     = useState(false);
+
+  const handleTermsSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    const annualRate    = Number(rate)    * 12;
-    const annualMgmt    = Number(mgmtRate) * (360 / Number(freqDays));
-    const annualProc    = Number(procRate) * (360 / Number(freqDays));
-    setLoading(true);
+    const annualRate = Number(rate) * 12;
+    const annualMgmt = Number(mgmtRate) * (360 / Number(freqDays));
+    const annualProc = Number(procRate) * (360 / Number(freqDays));
+    setTermsLoading(true);
     try {
       const res = await apiFetch(`/api/v1/loans/${loan.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          purpose,
-          amount:                 Number(amount),
-          annualInterestRate:     annualRate,
-          interestMethod:         method,
-          totalInstallments:      Number(installments),
-          repaymentFrequencyDays: Number(freqDays),
-          gracePeriodDays:        Number(grace),
-          branchName:             branch || null,
-          managementFeeRate:      annualMgmt,
-          processingFeeRate:      annualProc,
-          penaltyRatePerDay:      Number(penaltyRate),
+          purpose, amount: Number(amount), annualInterestRate: annualRate,
+          interestMethod: method, totalInstallments: Number(installments),
+          repaymentFrequencyDays: Number(freqDays), gracePeriodDays: Number(grace),
+          branchName: branch || null, managementFeeRate: annualMgmt,
+          processingFeeRate: annualProc, penaltyRatePerDay: Number(penaltyRate),
         }),
       });
       const json = await res.json();
       if (!res.ok) { setError(json.error || "Failed to update loan."); return; }
       onSaved();
-    } catch {
-      setError("Network error.");
-    } finally {
-      setLoading(false);
-    }
+    } catch { setError("Network error."); }
+    finally { setTermsLoading(false); }
+  };
+
+  const handleBalancesSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setBalLoading(true);
+    try {
+      const body: Record<string, unknown> = {
+        directOverride:            true,
+        status:                    loanStatus,
+        balanceOutstanding:        Number(balOutstanding),
+        amountRepaidPrincipal:     Number(repaidPrincipal),
+        amountRepaidInterest:      Number(repaidInterest),
+        amountRepaidMgmtFee:       Number(repaidMgmtFee),
+        amountRepaidProcessingFee: Number(repaidProcFee),
+        installmentsPaid:          Number(instPaid),
+        penaltyAmount:             Number(penaltyAmt),
+        penaltyPaid:               Number(penaltyPaidAmt),
+        totalRepayable:            Number(totalRepayable),
+        totalInterestScheduled:    Number(totIntSched),
+        totalMgmtFeeScheduled:     Number(totMgmtSched),
+        totalProcessingFeeScheduled: Number(totProcSched),
+      };
+      if (disbDate)     body.overrideDisbursementDate = disbDate;
+      if (maturityDate) body.overrideMaturityDate     = maturityDate;
+      if (nextPmtDate)  body.overrideNextPaymentDate  = nextPmtDate;
+      const res = await apiFetch(`/api/v1/loans/${loan.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const json = await res.json();
+      if (!res.ok) { setError(json.error || "Failed to update balances."); return; }
+      onSaved();
+    } catch { setError("Network error."); }
+    finally { setBalLoading(false); }
   };
 
   const freqOptions = [
@@ -1886,66 +1935,166 @@ function EditLoanForm({ loan, onClose, onSaved }: { loan: Loan & { customer?: an
     { value: "90", label: "Quarterly" },
   ];
 
+  const statusOptions = [
+    { value: "pending",     label: "Pending" },
+    { value: "approved",    label: "Approved" },
+    { value: "active",      label: "Active" },
+    { value: "disbursed",   label: "Disbursed" },
+    { value: "overdue",     label: "Overdue" },
+    { value: "completed",   label: "Completed" },
+    { value: "rejected",    label: "Rejected" },
+    { value: "written_off", label: "Written Off" },
+  ];
+
   return (
-    <form onSubmit={handleSubmit} className="p-6 space-y-4">
+    <div>
+      {/* Tab bar */}
+      <div className="flex border-b border-gray-200 dark:border-gray-700 px-6">
+        {(["terms", "balances"] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => { setTab(t); setError(""); }}
+            className={`px-4 py-3 text-xs font-semibold capitalize border-b-2 transition-colors ${
+              tab === t
+                ? "border-green-600 text-green-700 dark:text-green-400"
+                : "border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
+            }`}
+          >
+            {t === "terms" ? "Loan Terms" : "Balances"}
+          </button>
+        ))}
+      </div>
+
       {error && (
-        <p className="text-xs text-red-600 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">{error}</p>
+        <p className="mx-6 mt-3 text-xs text-red-600 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">{error}</p>
       )}
-      <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-3 text-xs text-amber-700 dark:text-amber-300">
-        Super admin edit — changes apply immediately to all loan fields.
-      </div>
 
-      <Input label="Purpose" value={purpose} onChange={(e) => setPurpose(e.target.value)} required />
+      {/* ── Terms tab ── */}
+      {tab === "terms" && (
+        <form onSubmit={handleTermsSubmit} className="p-6 space-y-4">
+          <Input label="Purpose" value={purpose} onChange={(e) => setPurpose(e.target.value)} required />
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Loan Amount (RWF)" type="number" min="1" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+            <Input label="Branch" value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="Optional" />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Monthly Interest Rate (%)" type="number" min="0" step="0.01" value={rate} onChange={(e) => setRate(e.target.value)} required />
+            <Select
+              label="Interest Method"
+              options={[{ value: "flat", label: "Flat" }, { value: "declining", label: "Declining Balance" }]}
+              value={method}
+              onChange={(e) => setMethod(e.target.value as any)}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Total Installments" type="number" min="1" value={installments} onChange={(e) => setInstallments(e.target.value)} required />
+            <Select label="Repayment Frequency" options={freqOptions} value={freqDays} onChange={(e) => setFreqDays(e.target.value)} />
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <Input label="Grace Period (days)" type="number" min="0" value={grace} onChange={(e) => setGrace(e.target.value)} />
+            <Input label="Mgmt Fee (%/period)" type="number" min="0" step="0.01" value={mgmtRate} onChange={(e) => setMgmtRate(e.target.value)} />
+            <Input label="Proc Fee (%/period)" type="number" min="0" step="0.01" value={procRate} onChange={(e) => setProcRate(e.target.value)} />
+          </div>
+          <Input label="Penalty Rate (%/day overdue)" type="number" min="0" step="0.001" value={penaltyRate} onChange={(e) => setPenaltyRate(e.target.value)} />
+          <div className="flex justify-end gap-3 pt-1">
+            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+            <Button type="submit" loading={termsLoading}>Save Terms</Button>
+          </div>
+        </form>
+      )}
 
-      <div className="grid grid-cols-2 gap-4">
-        <Input label="Loan Amount (RWF)" type="number" min="1" value={amount} onChange={(e) => setAmount(e.target.value)} required />
-        <Input label="Branch" value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="Optional" />
-      </div>
+      {/* ── Balances tab ── */}
+      {tab === "balances" && (
+        <form onSubmit={handleBalancesSubmit} className="p-6 space-y-4">
+          <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-3 text-xs text-amber-700 dark:text-amber-300">
+            Values are saved directly without recalculation. Use carefully.
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Select label="Loan Status" options={statusOptions} value={loanStatus} onChange={(e) => setLoanStatus(e.target.value as any)} />
+            <Input label="Total Repayable (RWF)" type="number" min="0" value={totalRepayable} onChange={(e) => setTotalRepayable(e.target.value)} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Balance Outstanding (RWF)" type="number" min="0" value={balOutstanding} onChange={(e) => setBalOutstanding(e.target.value)} />
+            <Input label="Installments Paid" type="number" min="0" value={instPaid} onChange={(e) => setInstPaid(e.target.value)} />
+          </div>
+          <p className="text-[11px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">Scheduled Totals</p>
+          <div className="grid grid-cols-3 gap-4">
+            <Input label="Total Interest Scheduled (RWF)" type="number" min="0" value={totIntSched} onChange={(e) => setTotIntSched(e.target.value)} />
+            <Input label="Total Mgmt Fee Scheduled (RWF)" type="number" min="0" value={totMgmtSched} onChange={(e) => setTotMgmtSched(e.target.value)} />
+            <Input label="Total Proc Fee Scheduled (RWF)" type="number" min="0" value={totProcSched} onChange={(e) => setTotProcSched(e.target.value)} />
+          </div>
+          <p className="text-[11px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">Amounts Repaid</p>
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Principal Repaid (RWF)" type="number" min="0" value={repaidPrincipal} onChange={(e) => setRepaidPrincipal(e.target.value)} />
+            <Input label="Interest Repaid (RWF)" type="number" min="0" value={repaidInterest} onChange={(e) => setRepaidInterest(e.target.value)} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Mgmt Fee Repaid (RWF)" type="number" min="0" value={repaidMgmtFee} onChange={(e) => setRepaidMgmtFee(e.target.value)} />
+            <Input label="Proc Fee Repaid (RWF)" type="number" min="0" value={repaidProcFee} onChange={(e) => setRepaidProcFee(e.target.value)} />
+          </div>
+          <p className="text-[11px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">Penalty</p>
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Penalty Outstanding (RWF)" type="number" min="0" value={penaltyAmt} onChange={(e) => setPenaltyAmt(e.target.value)} />
+            <Input label="Penalty Paid (RWF)" type="number" min="0" value={penaltyPaidAmt} onChange={(e) => setPenaltyPaidAmt(e.target.value)} />
+          </div>
+          <p className="text-[11px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">Dates</p>
+          <div className="grid grid-cols-3 gap-4">
+            <Input label="Disbursement Date" type="date" value={disbDate} onChange={(e) => setDisbDate(e.target.value)} />
+            <Input label="Maturity Date" type="date" value={maturityDate} onChange={(e) => setMaturityDate(e.target.value)} />
+            <Input label="Next Payment Date" type="date" value={nextPmtDate} onChange={(e) => setNextPmtDate(e.target.value)} />
+          </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <Input label="Monthly Interest Rate (%)" type="number" min="0" step="0.01" value={rate} onChange={(e) => setRate(e.target.value)} required />
-        <Select
-          label="Interest Method"
-          options={[{ value: "flat", label: "Flat" }, { value: "declining", label: "Declining Balance" }]}
-          value={method}
-          onChange={(e) => setMethod(e.target.value as any)}
-        />
-      </div>
+          {/* ── Live Total Outstanding summary ── */}
+          {(() => {
+            const bal       = Number(balOutstanding)  || 0;
+            const intRepaid = Number(repaidInterest)  || 0;
+            const mgtRepaid = Number(repaidMgmtFee)   || 0;
+            const prcRepaid = Number(repaidProcFee)   || 0;
+            const repayable = Number(totalRepayable)  || 0;
+            const penalty   = Number(penaltyAmt)      || 0;
+            const totalRepaid = (Number(repaidPrincipal) || 0) + intRepaid + mgtRepaid + prcRepaid;
+            const interestAndFeesRemaining = Math.max(0, repayable - (Number(repaidPrincipal) || 0) - intRepaid - mgtRepaid - prcRepaid - bal);
+            const totalOutstanding = bal + interestAndFeesRemaining + penalty;
+            return (
+              <div className="rounded-xl bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 px-4 py-3 flex items-center justify-between gap-4">
+                <div className="text-xs text-gray-500 dark:text-gray-400 space-y-0.5">
+                  <p>Principal remaining: <span className="font-semibold text-gray-900 dark:text-gray-100">RWF {bal.toLocaleString()}</span></p>
+                  <p>Interest &amp; fees remaining: <span className="font-semibold text-gray-900 dark:text-gray-100">RWF {interestAndFeesRemaining.toLocaleString()}</span></p>
+                  <p>Penalty: <span className="font-semibold text-red-600 dark:text-red-400">RWF {penalty.toLocaleString()}</span></p>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="text-[10px] text-gray-400 uppercase tracking-wide">Total Outstanding</p>
+                  <p className="text-lg font-bold text-red-600 dark:text-red-400">RWF {totalOutstanding.toLocaleString()}</p>
+                </div>
+              </div>
+            );
+          })()}
 
-      <div className="grid grid-cols-2 gap-4">
-        <Input label="Total Installments" type="number" min="1" value={installments} onChange={(e) => setInstallments(e.target.value)} required />
-        <Select
-          label="Repayment Frequency"
-          options={freqOptions}
-          value={freqDays}
-          onChange={(e) => setFreqDays(e.target.value)}
-        />
-      </div>
-
-      <div className="grid grid-cols-3 gap-4">
-        <Input label="Grace Period (days)" type="number" min="0" value={grace} onChange={(e) => setGrace(e.target.value)} />
-        <Input label="Mgmt Fee Rate (%/period)" type="number" min="0" step="0.01" value={mgmtRate} onChange={(e) => setMgmtRate(e.target.value)} />
-        <Input label="Proc Fee Rate (%/period)" type="number" min="0" step="0.01" value={procRate} onChange={(e) => setProcRate(e.target.value)} />
-      </div>
-
-      <Input label="Penalty Rate (%/day overdue)" type="number" min="0" step="0.001" value={penaltyRate} onChange={(e) => setPenaltyRate(e.target.value)} />
-
-      <div className="flex justify-end gap-3 pt-1">
-        <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-        <Button type="submit" loading={loading}>Save Changes</Button>
-      </div>
-    </form>
+          <div className="flex justify-end gap-3 pt-1">
+            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+            <Button type="submit" loading={balLoading}>Save Balances</Button>
+          </div>
+        </form>
+      )}
+    </div>
   );
 }
 
-// ── Edit Payment Form (super_admin only) ─────────────────────────────────────
+// ── Edit Payment Form ─────────────────────────────────────────────────────────
 function EditPaymentForm({ payment, onClose, onSaved }: { payment: Payment & { recordedByName?: string }; onClose: () => void; onSaved: () => void }) {
-  const [reference, setReference] = useState(payment.reference);
-  const [notes,     setNotes]     = useState(payment.notes ?? "");
-  const [method,    setMethod]    = useState(payment.method);
-  const [date,      setDate]      = useState(new Date(payment.date).toISOString().slice(0, 10));
-  const [loading,   setLoading]   = useState(false);
-  const [error,     setError]     = useState("");
+  const [amount,        setAmount]        = useState(String(payment.amount));
+  const [principal,     setPrincipal]     = useState(String(payment.principal));
+  const [interest,      setInterest]      = useState(String(payment.interest));
+  const [managementFee, setManagementFee] = useState(String(payment.managementFee));
+  const [processingFee, setProcessingFee] = useState(String(payment.processingFee ?? 0));
+  const [penalty,       setPenalty]       = useState(String(payment.penalty));
+  const [reference,     setReference]     = useState(payment.reference);
+  const [notes,         setNotes]         = useState(payment.notes ?? "");
+  const [method,        setMethod]        = useState(payment.method);
+  const [date,          setDate]          = useState(new Date(payment.date).toISOString().slice(0, 10));
+  const [loading,       setLoading]       = useState(false);
+  const [error,         setError]         = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1955,7 +2104,11 @@ function EditPaymentForm({ payment, onClose, onSaved }: { payment: Payment & { r
       const res = await apiFetch(`/api/v1/payments/${payment.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reference, notes: notes || null, method, date }),
+        body: JSON.stringify({
+          amount: Number(amount), principal: Number(principal), interest: Number(interest),
+          managementFee: Number(managementFee), processingFee: Number(processingFee),
+          penalty: Number(penalty), reference, notes: notes || null, method, date,
+        }),
       });
       const json = await res.json();
       if (!res.ok) { setError(json.error || "Failed to update payment."); return; }
@@ -1972,36 +2125,45 @@ function EditPaymentForm({ payment, onClose, onSaved }: { payment: Payment & { r
       {error && (
         <p className="text-xs text-red-600 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">{error}</p>
       )}
-      <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-3 text-xs text-amber-700 dark:text-amber-300">
-        Editing payment metadata only — amount and allocation cannot be changed here.
+      <div className="grid grid-cols-2 gap-3">
+        <Input label="Total Amount (RWF)" type="number" min="0" value={amount}        onChange={(e) => setAmount(e.target.value)} />
+        <Input label="Principal (RWF)"    type="number" min="0" value={principal}     onChange={(e) => setPrincipal(e.target.value)} />
       </div>
-
-      <Input label="Payment Date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
-      <Select
-        label="Payment Method"
-        options={[
-          { value: "cash",          label: "Cash" },
-          { value: "bank_transfer", label: "Bank Transfer" },
-          { value: "mobile_money",  label: "Mobile Money" },
-        ]}
-        value={method}
-        onChange={(e) => setMethod(e.target.value as any)}
-      />
+      <div className="grid grid-cols-2 gap-3">
+        <Input label="Interest (RWF)"     type="number" min="0" value={interest}      onChange={(e) => setInterest(e.target.value)} />
+        <Input label="Mgmt Fee (RWF)"     type="number" min="0" value={managementFee} onChange={(e) => setManagementFee(e.target.value)} />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Input label="Proc Fee (RWF)"     type="number" min="0" value={processingFee} onChange={(e) => setProcessingFee(e.target.value)} />
+        <Input label="Penalty (RWF)"      type="number" min="0" value={penalty}       onChange={(e) => setPenalty(e.target.value)} />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Input label="Payment Date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+        <Select
+          label="Payment Method"
+          options={[
+            { value: "cash",          label: "Cash" },
+            { value: "bank_transfer", label: "Bank Transfer" },
+            { value: "mobile_money",  label: "Mobile Money" },
+          ]}
+          value={method}
+          onChange={(e) => setMethod(e.target.value as any)}
+        />
+      </div>
       <Input label="Reference / Receipt #" value={reference} onChange={(e) => setReference(e.target.value)} required />
       <div>
         <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Notes</label>
         <textarea
           className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
-          rows={3}
+          rows={2}
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           placeholder="Optional notes..."
         />
       </div>
-
       <div className="flex justify-end gap-3 pt-1">
         <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-        <Button type="submit" loading={loading}>Save Changes</Button>
+        <Button type="submit" loading={loading}>Save Payment</Button>
       </div>
     </form>
   );
@@ -2017,7 +2179,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
   const canDisburse      = ["managing_director", "loan_officer", "super_admin"].includes(role);
   const canRecordPayment = ["managing_director", "loan_officer", "super_admin"].includes(role);
   const canDelete        = ["managing_director", "loan_officer", "super_admin"].includes(role);
-  const canEditLoan      = role === "super_admin";
+  const canEditLoan      = role === "managing_director";
 
   const [loan, setLoan]                 = useState<(Loan & { customer?: any; loanOfficer?: any; approvedBy?: any }) | null>(null);
   const [installments, setInstallments] = useState<Installment[]>([]);
@@ -2051,9 +2213,8 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
     setLoading(true);
     setError("");
     try {
-      const [loanRes, instRes, payRes, commentsRes] = await Promise.all([
+      const [loanRes, payRes, commentsRes] = await Promise.all([
         apiFetch(`/api/v1/loans/${id}`),
-        apiFetch(`/api/v1/loans/${id}/installments`),
         apiFetch(`/api/v1/payments?loanId=${id}&limit=100`),
         apiFetch(`/api/v1/loans/${id}/comments`),
       ]);
@@ -2061,7 +2222,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
       if (!loanRes.ok) { setError("Failed to load loan."); return; }
       const loanJson = await loanRes.json();
       setLoan(loanJson.data);
-      if (instRes.ok)     { const j = await instRes.json();     setInstallments(j.data ?? []); }
+      setInstallments(loanJson.data.installments ?? []);
       if (payRes.ok)      { const j = await payRes.json();      setPayments(j.data ?? []); }
       if (commentsRes.ok) { const j = await commentsRes.json(); setComments(j.data ?? []); }
     } catch {
@@ -3311,7 +3472,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
 
       {/* ── Edit Loan Modal (super_admin) ─────────────────────────────── */}
       {canEditLoan && (
-        <Modal isOpen={showEditLoanModal} onClose={() => setShowEditLoanModal(false)} title="Edit Loan" size="lg">
+        <Modal isOpen={showEditLoanModal} onClose={() => setShowEditLoanModal(false)} title="Edit Loan" size="xl">
           <EditLoanForm
             loan={loan}
             onClose={() => setShowEditLoanModal(false)}
@@ -3320,9 +3481,9 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
         </Modal>
       )}
 
-      {/* ── Edit Payment Modal (super_admin) ──────────────────────────── */}
+      {/* ── Edit Payment Modal ────────────────────────────────────────── */}
       {canEditLoan && editingPayment && (
-        <Modal isOpen={!!editingPayment} onClose={() => setEditingPayment(null)} title="Edit Payment" size="sm">
+        <Modal isOpen={!!editingPayment} onClose={() => setEditingPayment(null)} title="Edit Payment" size="md">
           <EditPaymentForm
             payment={editingPayment}
             onClose={() => setEditingPayment(null)}

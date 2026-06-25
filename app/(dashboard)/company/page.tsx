@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import { UserPlus, Edit2, Trash2, Search, UserCog, CheckCircle2, Loader2, AlertCircle } from "lucide-react";
+import { UserPlus, Edit2, Trash2, Search, UserCog, CheckCircle2, Loader2, AlertCircle, UserX, UserCheck } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Card, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -240,17 +240,38 @@ export default function CompanyPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Remove this team member? Their loans and payments will also be deleted. This cannot be undone.")) return;
+  const handleDeactivate = async (id: string) => {
+    if (!confirm("Deactivate this team member? They will no longer be able to log in, but all their loans, payments, and records will be preserved.")) return;
     setDeletingId(id);
     try {
       const res = await apiFetch(`/api/v1/users/${id}`, { method: "DELETE" });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
-        alert(json.error ?? "Failed to delete user. Please try again.");
+        alert(json.error ?? "Failed to deactivate user. Please try again.");
         return;
       }
-      setUsers((prev) => prev.filter((u) => u.id !== id));
+      const json = await res.json();
+      setUsers((prev) => prev.map((u) => u.id === id ? { ...u, ...json.data } : u));
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleReactivate = async (id: string) => {
+    setDeletingId(id);
+    try {
+      const res = await apiFetch(`/api/v1/users/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: true }),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        alert(json.error ?? "Failed to reactivate user. Please try again.");
+        return;
+      }
+      const json = await res.json();
+      setUsers((prev) => prev.map((u) => u.id === id ? { ...u, ...json.data } : u));
     } finally {
       setDeletingId(null);
     }
@@ -383,13 +404,25 @@ export default function CompanyPage() {
                       <td className="px-6 py-3.5">
                         <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                           <Button variant="ghost" size="sm" icon={<Edit2 className="w-3.5 h-3.5" />} onClick={() => setEditUser(user)}>Edit Role</Button>
-                          <button
-                            disabled={deletingId === user.id}
-                            onClick={() => handleDelete(user.id)}
-                            className="p-1.5 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-40"
-                          >
-                            {deletingId === user.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-                          </button>
+                          {user.isActive !== false ? (
+                            <button
+                              disabled={deletingId === user.id}
+                              onClick={() => handleDeactivate(user.id)}
+                              title="Deactivate user"
+                              className="p-1.5 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-40"
+                            >
+                              {deletingId === user.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserX className="w-3.5 h-3.5" />}
+                            </button>
+                          ) : (
+                            <button
+                              disabled={deletingId === user.id}
+                              onClick={() => handleReactivate(user.id)}
+                              title="Reactivate user"
+                              className="p-1.5 rounded-lg text-green-500 hover:text-green-700 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors disabled:opacity-40"
+                            >
+                              {deletingId === user.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserCheck className="w-3.5 h-3.5" />}
+                            </button>
+                          )}
                         </div>
                       </td>
                     </motion.tr>

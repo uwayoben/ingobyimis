@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getAuthUser } from "@/lib/auth";
-import { ok, noContent, unauthorized, forbidden, badRequest, notFound, serverError } from "@/lib/api-response";
+import { ok, unauthorized, forbidden, badRequest, notFound, serverError } from "@/lib/api-response";
 import { z } from "zod";
 
 const updateSchema = z.object({
@@ -49,33 +49,15 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
     const target = await prisma.user.findUnique({ where: { id }, select: { companyId: true, role: true } });
     if (!target) return notFound("User not found.");
     if (auth.role === "managing_director" && target.companyId !== auth.companyId) return forbidden();
-    if (id === auth.userId) return badRequest("You cannot delete your own account.");
+    if (id === auth.userId) return badRequest("You cannot deactivate your own account.");
 
-    // Delete in dependency order to avoid FK constraint violations.
-    // Loans own the main data chain; payments recorded by this user may span
-    // loans they didn't originate, so we handle both paths.
-    await prisma.$transaction(async (tx) => {
-      // Clear nullable back-reference on loans this user approved
-      await tx.loan.updateMany({ where: { approvedById: id }, data: { approvedById: null } });
-
-      // Delete sub-records of loans this user is officer on
-      await tx.installment.deleteMany({ where: { loan: { loanOfficerId: id } } });
-      await tx.loanFee.deleteMany({ where: { loan: { loanOfficerId: id } } });
-
-      // Delete all payments recorded by this user (across any loan)
-      await tx.payment.deleteMany({ where: { recordedById: id } });
-
-      // Delete any remaining payments on the officer's own loans
-      await tx.payment.deleteMany({ where: { loan: { loanOfficerId: id } } });
-
-      // Delete the loans themselves
-      await tx.loan.deleteMany({ where: { loanOfficerId: id } });
-
-      // Delete the user
-      await tx.user.delete({ where: { id } });
+    const updated = await prisma.user.update({
+      where: { id },
+      data: { isActive: false },
+      select: { id: true, name: true, email: true, role: true, phone: true, isActive: true, createdAt: true },
     });
 
-    return noContent();
+    return ok(updated);
   } catch (e) {
     console.error(e);
     return serverError();

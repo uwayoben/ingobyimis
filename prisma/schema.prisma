@@ -481,3 +481,4 @@ model AuditLog {
   @@index([userEmail])
   @@index([companyId])
 }
+

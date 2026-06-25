@@ -64,19 +64,19 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       return forbidden("You do not have permission to disburse loans.");
     }
 
-    // Field editing — super_admin only, any loan status
+    // Field editing — managing_director only, any loan status
     const editableFields = ["purpose", "amount", "annualInterestRate", "interestMethod",
       "totalInstallments", "repaymentFrequencyDays", "gracePeriodDays",
       "branchName", "managementFeeRate", "processingFeeRate", "penaltyRatePerDay"];
     const hasFieldEdit = editableFields.some((f) => body[f] !== undefined);
-    if (hasFieldEdit && !isSuperAdmin) {
-      return forbidden("Only super_admin can edit loan details.");
+    if (hasFieldEdit && auth.role !== "managing_director") {
+      return forbidden("Only a managing director can edit loan details.");
     }
 
     const updateData: Record<string, unknown> = {};
     if (body.status !== undefined) updateData.status = body.status;
 
-    if (hasFieldEdit && isSuperAdmin) {
+    if (hasFieldEdit && auth.role === "managing_director") {
       if (body.purpose            !== undefined) updateData.purpose            = body.purpose;
       if (body.branchName         !== undefined) updateData.branchName         = body.branchName || null;
       if (body.interestMethod     !== undefined) updateData.interestMethod     = body.interestMethod;
@@ -122,6 +122,22 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       updateData.balanceOutstanding = principal;
     }
 
+    // Direct balance override — managing_director, bypasses recalculation
+    if (body.directOverride === true && auth.role === "managing_director") {
+      const numFields = [
+        "balanceOutstanding", "amountRepaidPrincipal", "amountRepaidInterest",
+        "amountRepaidMgmtFee", "amountRepaidProcessingFee", "installmentsPaid",
+        "penaltyAmount", "penaltyPaid", "totalRepayable",
+        "totalInterestScheduled", "totalMgmtFeeScheduled", "totalProcessingFeeScheduled",
+      ];
+      for (const f of numFields) {
+        if (body[f] !== undefined) updateData[f] = Number(body[f]);
+      }
+      if (body.overrideDisbursementDate !== undefined) updateData.disbursementDate   = new Date(body.overrideDisbursementDate as string);
+      if (body.overrideMaturityDate     !== undefined) updateData.agreedMaturityDate = new Date(body.overrideMaturityDate as string);
+      if (body.overrideNextPaymentDate  !== undefined) updateData.nextPaymentDate    = new Date(body.overrideNextPaymentDate as string);
+    }
+
     if (body.signedContractUrl !== undefined) {
       updateData.signedContractUrl = body.signedContractUrl;
     }
@@ -131,7 +147,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       updateData.approvedAt   = new Date();
     }
 
-    if (body.status === "disbursed" || body.status === "active") {
+    if (!body.directOverride && (body.status === "disbursed" || body.status === "active")) {
       const disbDate        = body.disbursementDate ? new Date(body.disbursementDate) : new Date();
       const disburseAmount  = (body.disbursedAmount ?? loan.amount) as number;
 
@@ -184,7 +200,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     }
 
     // For disbursements, deduct from company account balance and create schedule atomically
-    if ((body.status === "disbursed" || body.status === "active") && auth.companyId) {
+    if (!body.directOverride && (body.status === "disbursed" || body.status === "active") && auth.companyId) {
       const disburseAmount = updateData.disbursedAmount as number;
       const schedule       = updateData._schedule as ReturnType<typeof generateSchedule> | undefined;
       delete updateData._schedule;
@@ -263,6 +279,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       return ok({ ...updated, annualInterestRate: Number(updated.annualInterestRate) });
     }
 
+    delete updateData._schedule;
     const updated = await prisma.loan.update({ where: { id }, data: updateData });
     return ok({ ...updated, annualInterestRate: Number(updated.annualInterestRate) });
   } catch (e) {
