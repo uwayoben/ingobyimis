@@ -185,6 +185,9 @@ function fillClassSheet(
 
 // ── Fill FS financial summary sheet ──────────────────────────────────────────
 
+// Template's accounting format renders 0 as "-"; this override makes it read as a literal 0.
+const ZERO_AS_DIGIT_FORMAT = "_(* #,##0_);_(* (#,##0);_(* 0_);_(@_)";
+
 function fillFsSheet(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ws: any,
@@ -192,24 +195,17 @@ function fillFsSheet(
   ndfspName: string,
   sector: string,
   district: string,
-  cutoffDate: Date
+  bankAccountBalance: number,
+  fixedAssetsGross: number,
+  expenses: { category: string; amount: number }[]
 ) {
   // Rows 1-3: institution metadata (value in col 2)
   ws.row(1).cell(2).value(ndfspName);
   ws.row(2).cell(2).value(sector);
   ws.row(3).cell(2).value(district);
 
-  // Find closest quarter column: row 3, cols 4-9 hold quarterly date serials
-  const reportSerial = toExcelDate(cutoffDate) as number;
-  let targetCol = 9;
-  let bestDiff = Infinity;
-  for (let c = 4; c <= 9; c++) {
-    const v = ws.row(3).cell(c).value();
-    if (typeof v === "number") {
-      const diff = Math.abs(v - reportSerial);
-      if (diff < bestDiff) { bestDiff = diff; targetCol = c; }
-    }
-  }
+  // Template now has a single reporting-period column: D.
+  const targetCol = 4;
 
   const activeLoans = loans.filter(
     (l) => !["written_off", "rejected", "pending"].includes(l.status)
@@ -219,12 +215,43 @@ function fillFsSheet(
   const npl = activeLoans
     .filter((l) => ["Substandard", "Doubtful", "Loss"].includes(l.loanClass))
     .reduce((s, l) => s + l.balanceOutstanding, 0);
+  const interestFromCompleted = loans
+    .filter((l) => l.status === "completed")
+    .reduce((s, l) => s + l.amountRepaidInterest + l.additionalInterestPaid, 0);
+  // All interest scheduled on every loan, whether collected yet or not.
+  const totalInterestIncome = loans.reduce((s, l) => s + l.totalInterestScheduled, 0);
+  const totalFeesIncome = loans.reduce(
+    (s, l) => s + l.totalMgmtFeeScheduled + l.totalProcessingFeeScheduled,
+    0
+  );
 
-  ws.row(6).cell(targetCol).value(0);                             // 2.Cash in vault — always 0
-  ws.row(9).cell(targetCol).value(grossLoans);                    // 5.Gross Loans
+  ws.row(6).cell(targetCol).value(0).style("numberFormat", ZERO_AS_DIGIT_FORMAT); // 2.Cash in vault — always 0
+  ws.row(7).cell(targetCol).value(bankAccountBalance);            // 3.Cash in bank (Current account)
+  ws.row(8).cell(targetCol).value(0).style("numberFormat", ZERO_AS_DIGIT_FORMAT); // 4.Cash in bank (Term deposit) — always 0
+  // 5.Gross Loans (row 9) — left alone; template formula (=D93) computes it.
   ws.row(10).cell(targetCol).value(totalProvision);               // 6.Provisions
   ws.row(11).cell(targetCol).value(grossLoans - totalProvision);  // 7.Net Loans
   ws.row(12).cell(targetCol).value(npl);                          // 8.NPLs
+  ws.row(13).cell(targetCol).value(0).style("numberFormat", ZERO_AS_DIGIT_FORMAT); // 9.Financial Instruments — always 0
+  ws.row(14).cell(targetCol).value(fixedAssetsGross);             // Fixed Assets Gross Amount
+  ws.row(17).cell(targetCol).value(interestFromCompleted);        // 11.Interest receivable (interest from completed loans)
+  ws.row(19).cell(targetCol).value(0).style("numberFormat", ZERO_AS_DIGIT_FORMAT); // 13.Suspense Accounts — always 0
+  ws.row(27).cell(targetCol).value(0).style("numberFormat", ZERO_AS_DIGIT_FORMAT); // 21.Subsidies — always 0
+  ws.row(28).cell(targetCol).value(0).style("numberFormat", ZERO_AS_DIGIT_FORMAT); // 22.Revaluation surplus — always 0
+  ws.row(29).cell(targetCol).value(0).style("numberFormat", ZERO_AS_DIGIT_FORMAT); // 23.Other Equity — always 0
+  ws.row(40).cell(targetCol).value(totalInterestIncome);          // 32.Interest Income on Loan Portfolio
+  ws.row(41).cell(targetCol).value(totalFeesIncome);              // 33.Fees and Commissions on Loan Portfolio
+  ws.row(42).cell(targetCol).value(0).style("numberFormat", ZERO_AS_DIGIT_FORMAT); // 34.Incomes on Deposits in banks and other FIs — always 0
+  ws.row(43).cell(targetCol).value(0).style("numberFormat", ZERO_AS_DIGIT_FORMAT); // 35.Incomes on Financial Instruments — always 0
+  ws.row(44).cell(targetCol).value(0).style("numberFormat", ZERO_AS_DIGIT_FORMAT); // 36.Other financial Income — always 0
+  ws.row(45).cell(targetCol).value(0).style("numberFormat", ZERO_AS_DIGIT_FORMAT); // 37.Recoveries on Loans (prov. Back) — always 0
+
+  const sumByCategory = (category: string) =>
+    expenses.filter((e) => e.category === category).reduce((s, e) => s + e.amount, 0);
+
+  ws.row(53).cell(targetCol).value(sumByCategory("Bank Charges"));             // 45.Bank Charges, Commissions and other Financial Exp.
+  ws.row(56).cell(targetCol).value(sumByCategory("Personal Expenses"));        // 48.Personnel Expenses (Gross amount)
+  ws.row(57).cell(targetCol).value(sumByCategory("Administrative Expenses")); // 49.Administrative Expenses
 
   // Supplementary gender breakdown (rows 73-80)
   const men    = activeLoans.filter((l) => ["male",   "m"].includes((l.customer.gender ?? "").toLowerCase()));
@@ -240,6 +267,16 @@ function fillFsSheet(
   ws.row(78).cell(targetCol).value(sumBal(women));
   ws.row(79).cell(targetCol).value(sumBal(groups));
   ws.row(80).cell(targetCol).value(grossLoans);
+
+  // Outstanding balance by economic sector (rows 81-85)
+  const sumBySector = (sector: string) =>
+    activeLoans.filter((l) => l.economicSector === sector).reduce((s, l) => s + l.balanceOutstanding, 0);
+
+  ws.row(81).cell(targetCol).value(sumBySector("Agriculture, Livestock, Fishing"));
+  ws.row(82).cell(targetCol).value(sumBySector("Public Works (Construction), Buildings, Residences/Homes"));
+  ws.row(83).cell(targetCol).value(sumBySector("Commerce, Restaurants, Hotels"));
+  ws.row(84).cell(targetCol).value(sumBySector("Transport, Warehouses, Communications"));
+  ws.row(85).cell(targetCol).value(sumBySector("Others"));
 }
 
 // ── Prisma fetch ──────────────────────────────────────────────────────────────
@@ -278,7 +315,25 @@ export async function GET(request: Request) {
     const district = searchParams.get("district") ?? "";
     const cutoffDate = new Date(reportingDateStr);
 
-    const loans = await fetchLoans(auth.companyId);
+    // Only loans disbursed within the reporting window (Mar 1 – Jun 30 of the reporting year).
+    const reportYear = cutoffDate.getFullYear();
+    const windowStart = new Date(Date.UTC(reportYear, 2, 1));
+    const windowEnd   = new Date(Date.UTC(reportYear, 5, 30));
+    const [allLoans, company, assetTotal, expenses] = await Promise.all([
+      fetchLoans(auth.companyId),
+      prisma.company.findUnique({ where: { id: auth.companyId }, select: { accountBalance: true } }),
+      prisma.asset.aggregate({ where: { companyId: auth.companyId }, _sum: { purchaseValue: true } }),
+      prisma.expense.findMany({
+        where: { companyId: auth.companyId, date: { gte: windowStart, lte: windowEnd } },
+        select: { category: true, amount: true },
+      }),
+    ]);
+    const fixedAssetsGross = assetTotal._sum.purchaseValue ?? 0;
+    const loans = allLoans.filter((l) => {
+      if (!l.disbursementDate) return false;
+      const d = new Date(l.disbursementDate);
+      return d >= windowStart && d <= windowEnd;
+    });
 
     const normal       = loans.filter((l) => l.loanClass === "Normal"      && !l.isRestructured && l.status !== "written_off");
     const watch        = loans.filter((l) => l.loanClass === "Watch"       && !l.isRestructured && l.status !== "written_off");
@@ -341,10 +396,10 @@ export async function GET(request: Request) {
       }
     }
 
-    // A1.2 FS — fill loan totals into closest quarter column
+    // A1.2 FS — fill loan totals into the reporting-period column
     {
       const ws = workbook.sheet("A1.2. FS");
-      if (ws) fillFsSheet(ws, loans, institutionName, sector, district, cutoffDate);
+      if (ws) fillFsSheet(ws, loans, institutionName, sector, district, company?.accountBalance ?? 0, fixedAssetsGross, expenses);
     }
 
     const buffer = await workbook.outputAsync();
