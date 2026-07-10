@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getAuthUser } from "@/lib/auth";
 import { unauthorized, forbidden, serverError } from "@/lib/api-response";
+import { classifyLoan } from "@/lib/loan-schedule";
 import path from "path";
 
 // xlsx-populate preserves all template styles/colors/borders on write
@@ -197,7 +198,8 @@ function fillFsSheet(
   district: string,
   bankAccountBalance: number,
   fixedAssetsGross: number,
-  expenses: { category: string; amount: number }[]
+  expenses: { category: string; amount: number }[],
+  penaltyIncome: number
 ) {
   // Rows 1-3: institution metadata (value in col 2)
   ws.row(1).cell(2).value(ndfspName);
@@ -243,7 +245,7 @@ function fillFsSheet(
   ws.row(41).cell(targetCol).value(totalFeesIncome);              // 33.Fees and Commissions on Loan Portfolio
   ws.row(42).cell(targetCol).value(0).style("numberFormat", ZERO_AS_DIGIT_FORMAT); // 34.Incomes on Deposits in banks and other FIs — always 0
   ws.row(43).cell(targetCol).value(0).style("numberFormat", ZERO_AS_DIGIT_FORMAT); // 35.Incomes on Financial Instruments — always 0
-  ws.row(44).cell(targetCol).value(0).style("numberFormat", ZERO_AS_DIGIT_FORMAT); // 36.Other financial Income — always 0
+  ws.row(44).cell(targetCol).value(penaltyIncome);                // 36.Other financial Income (penalties paid Apr 1 – Jun 30)
   ws.row(45).cell(targetCol).value(0).style("numberFormat", ZERO_AS_DIGIT_FORMAT); // 37.Recoveries on Loans (prov. Back) — always 0
 
   const sumByCategory = (category: string) =>
@@ -293,9 +295,79 @@ async function fetchLoans(companyId: string) {
         },
       },
       loanOfficer: { select: { name: true } },
+      payments: {
+        select: { date: true, principal: true, interest: true, managementFee: true, processingFee: true },
+      },
+      installments: {
+        select: { installmentNo: true, dueDate: true, totalDue: true },
+        orderBy: { installmentNo: "asc" },
+      },
     },
     orderBy: { createdAt: "desc" },
   });
+}
+
+// ── Point-in-time reconstruction ──────────────────────────────────────────────
+//
+// The Loan table only stores live values — balanceOutstanding/daysOverdue/loanClass
+// reflect "right now", not the cutoff date. To report state as of the cutoff, we
+// replay each loan's payments against its fixed installment schedule up through
+// the cutoff, the same way classify-loans does it for "today".
+//
+// This only works for loans whose schedule hasn't been mutated after disbursement.
+// Restructured loans (old side closed with no further payments, new side is a
+// fresh loan) and topped-up loans (schedule deleted/recreated in place) can't be
+// replayed this way, so those fall back to the loan's current live snapshot.
+function reconstructAsOfCutoff(loan: LoanWithRel, cutoffDate: Date, cutoffEnd: Date): LoanWithRel | null {
+  if (!loan.disbursementDate || new Date(loan.disbursementDate) > cutoffEnd) return null; // not disbursed yet as of cutoff
+
+  if (loan.isRestructured || loan.topUpAmount > 0) {
+    // Best-effort fallback: schedule was mutated, so a payment replay isn't reliable.
+    if (loan.balanceOutstanding <= 0) return null;
+    return loan;
+  }
+
+  const paymentsByCutoff = loan.payments.filter((p) => new Date(p.date) <= cutoffEnd);
+  const principalPaid = paymentsByCutoff.reduce((s, p) => s + p.principal, 0);
+  const balanceOutstanding = Math.max(0, loan.disbursedAmount - principalPaid);
+  if (balanceOutstanding <= 0) return null; // fully repaid by the cutoff date
+
+  let capacity = paymentsByCutoff.reduce((s, p) => s + p.principal + p.interest + p.managementFee + p.processingFee, 0);
+  let firstUnpaid: LoanWithRel["installments"][number] | undefined;
+  for (const inst of loan.installments) {
+    if (capacity >= inst.totalDue) {
+      capacity -= inst.totalDue;
+    } else {
+      firstUnpaid = inst;
+      break;
+    }
+  }
+
+  let daysOverdue = 0;
+  let arrearsStartDate: Date | null = null;
+  if (firstUnpaid) {
+    const dueDay = new Date(firstUnpaid.dueDate);
+    dueDay.setUTCHours(0, 0, 0, 0);
+    const cutoffDay = new Date(cutoffDate);
+    cutoffDay.setUTCHours(0, 0, 0, 0);
+    if (dueDay < cutoffDay) {
+      daysOverdue = Math.floor((cutoffDay.getTime() - dueDay.getTime()) / 86_400_000);
+      arrearsStartDate = firstUnpaid.dueDate;
+    }
+  }
+
+  const { loanClass, provisioningRate } = classifyLoan(daysOverdue);
+  const provisionRequired = Math.round(balanceOutstanding * provisioningRate / 100);
+
+  return {
+    ...loan,
+    balanceOutstanding,
+    daysOverdue,
+    arrearsStartDate,
+    loanClass,
+    provisioningRate: provisioningRate as unknown as LoanWithRel["provisioningRate"],
+    provisionRequired,
+  };
 }
 
 // ── Route handler ─────────────────────────────────────────────────────────────
@@ -315,32 +387,62 @@ export async function GET(request: Request) {
     const district = searchParams.get("district") ?? "";
     const cutoffDate = new Date(reportingDateStr);
 
-    // Only loans disbursed within the reporting window (Mar 1 – Jun 30 of the reporting year).
+    // Reporting quarter is Apr 1 – Jun 30 of the reporting year.
     const reportYear = cutoffDate.getFullYear();
-    const windowStart = new Date(Date.UTC(reportYear, 2, 1));
+    const windowStart = new Date(Date.UTC(reportYear, 3, 1));
     const windowEnd   = new Date(Date.UTC(reportYear, 5, 30));
-    const [allLoans, company, assetTotal, expenses] = await Promise.all([
+    // Bank balance must reflect the cutoff date, not "right now" — reconstruct it
+    // from the ledger's most recent entry on or before the cutoff (end of that day).
+    const cutoffEnd = new Date(Date.UTC(
+      cutoffDate.getUTCFullYear(), cutoffDate.getUTCMonth(), cutoffDate.getUTCDate(),
+      23, 59, 59, 999
+    ));
+
+    // "Other financial Income" = penalties paid Apr 1 – Jun 30 of the reporting year.
+    const penaltyWindowStart = new Date(Date.UTC(reportYear, 3, 1));
+    const penaltyWindowEnd   = new Date(Date.UTC(reportYear, 5, 30, 23, 59, 59, 999));
+
+    const [allLoans, bankLedgerEntry, assetTotal, expenses, penaltyAgg] = await Promise.all([
       fetchLoans(auth.companyId),
-      prisma.company.findUnique({ where: { id: auth.companyId }, select: { accountBalance: true } }),
+      prisma.ledgerEntry.findFirst({
+        where: { companyId: auth.companyId, createdAt: { lte: cutoffEnd } },
+        orderBy: { createdAt: "desc" },
+        select: { balanceAfter: true },
+      }),
       prisma.asset.aggregate({ where: { companyId: auth.companyId }, _sum: { purchaseValue: true } }),
       prisma.expense.findMany({
         where: { companyId: auth.companyId, date: { gte: windowStart, lte: windowEnd } },
         select: { category: true, amount: true },
       }),
+      prisma.payment.aggregate({
+        where: { companyId: auth.companyId, date: { gte: penaltyWindowStart, lte: penaltyWindowEnd } },
+        _sum: { penalty: true },
+      }),
     ]);
     const fixedAssetsGross = assetTotal._sum.purchaseValue ?? 0;
+    const bankAccountBalance = bankLedgerEntry?.balanceAfter ?? 0;
+    const penaltyIncome = penaltyAgg._sum.penalty ?? 0;
     const loans = allLoans.filter((l) => {
       if (!l.disbursementDate) return false;
       const d = new Date(l.disbursementDate);
       return d >= windowStart && d <= windowEnd;
     });
 
-    const normal       = loans.filter((l) => l.loanClass === "Normal"      && !l.isRestructured && l.status !== "written_off");
-    const watch        = loans.filter((l) => l.loanClass === "Watch"       && !l.isRestructured && l.status !== "written_off");
-    const substandard  = loans.filter((l) => l.loanClass === "Substandard" && !l.isRestructured && l.status !== "written_off");
-    const doubtful     = loans.filter((l) => l.loanClass === "Doubtful"    && !l.isRestructured && l.status !== "written_off");
-    const loss         = loans.filter((l) => l.loanClass === "Loss"        && !l.isRestructured && l.status !== "written_off");
-    const restructured = loans.filter((l) => l.isRestructured && l.status !== "written_off");
+    // Classification sheets: every loan still outstanding as of the cutoff date,
+    // regardless of when it was disbursed — reconstructed from payment history
+    // rather than read live, so a loan since fully repaid still shows as it stood
+    // on the cutoff date.
+    const outstandingAsOfCutoff = allLoans
+      .filter((l) => l.status !== "written_off")
+      .map((l) => reconstructAsOfCutoff(l, cutoffDate, cutoffEnd))
+      .filter((l): l is LoanWithRel => l !== null);
+
+    const normal       = outstandingAsOfCutoff.filter((l) => l.loanClass === "Normal"      && !l.isRestructured);
+    const watch        = outstandingAsOfCutoff.filter((l) => l.loanClass === "Watch"       && !l.isRestructured);
+    const substandard  = outstandingAsOfCutoff.filter((l) => l.loanClass === "Substandard" && !l.isRestructured);
+    const doubtful     = outstandingAsOfCutoff.filter((l) => l.loanClass === "Doubtful"    && !l.isRestructured);
+    const loss         = outstandingAsOfCutoff.filter((l) => l.loanClass === "Loss"        && !l.isRestructured);
+    const restructured = outstandingAsOfCutoff.filter((l) => l.isRestructured);
     const writtenOff   = loans.filter((l) => l.status === "written_off");
 
     // Load template — xlsx-populate operates on the raw XML zip so all
@@ -399,7 +501,7 @@ export async function GET(request: Request) {
     // A1.2 FS — fill loan totals into the reporting-period column
     {
       const ws = workbook.sheet("A1.2. FS");
-      if (ws) fillFsSheet(ws, loans, institutionName, sector, district, company?.accountBalance ?? 0, fixedAssetsGross, expenses);
+      if (ws) fillFsSheet(ws, loans, institutionName, sector, district, bankAccountBalance, fixedAssetsGross, expenses, penaltyIncome);
     }
 
     const buffer = await workbook.outputAsync();
