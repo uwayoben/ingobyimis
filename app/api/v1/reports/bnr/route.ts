@@ -10,18 +10,17 @@ const XlsxPopulate = require("xlsx-populate");
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
-// Used only for the FS sheet quarter-column lookup (needs a serial for comparison).
-function toExcelDate(d: Date | null | undefined): number | undefined {
-  if (!d) return undefined;
-  const epoch = new Date(Date.UTC(1899, 11, 30));
-  return Math.round((new Date(d).getTime() - epoch.getTime()) / 86400000);
-}
-
 // Returns a JS Date object so xlsx-populate writes the serial AND applies a
 // date number format automatically — avoids cells displaying raw numbers.
+//
+// xlsx-populate's date→serial conversion truncates to LOCAL midnight, but our
+// dates come from Prisma as UTC midnight. If the server's local timezone isn't
+// UTC, that mismatch leaves a fractional leftover (e.g. "46196.0833..." instead
+// of "46196"). Rebuilding the date from its UTC Y/M/D as local midnight avoids it.
 function toDate(d: Date | string | null | undefined): Date | undefined {
   if (!d) return undefined;
-  return new Date(d);
+  const dt = new Date(d);
+  return new Date(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate());
 }
 
 function calcAge(dob: Date | null | undefined): number | undefined {
@@ -41,6 +40,11 @@ type LoanWithRel = Awaited<ReturnType<typeof fetchLoans>>[number];
 
 // ── Cell helper (xlsx-populate is 1-indexed) ──────────────────────────────────
 
+// Most date columns in the template are left in "General" format — xlsx-populate
+// never sets a number format on its own, it only converts Date -> serial. Without
+// this, cells show the raw serial number instead of a date.
+const DATE_FORMAT = "dd/mm/yyyy";
+
 function setVal(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ws: any,
@@ -49,7 +53,8 @@ function setVal(
   value: RowValue
 ) {
   if (value === undefined || value === "") return;
-  ws.row(row).cell(col).value(value);
+  const cell = ws.row(row).cell(col).value(value);
+  if (value instanceof Date) cell.style("numberFormat", DATE_FORMAT);
 }
 
 // ── Sheet header fill ─────────────────────────────────────────────────────────
@@ -62,9 +67,8 @@ function setVal(
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function fillSheetHeader(ws: any, ndfspName: string, cutoffDate: Date, valueCol = 3) {
-  const dateSerial = toExcelDate(cutoffDate) as number;
   ws.row(2).cell(valueCol).value(ndfspName);
-  ws.row(4).cell(valueCol).value(dateSerial);
+  ws.row(4).cell(valueCol).value(toDate(cutoffDate));
 }
 
 // ── Row builders ──────────────────────────────────────────────────────────────
@@ -75,9 +79,6 @@ function buildStandardRow(
   cutoffDate: Date
 ): RowValue[] {
   const cu = loan.customer;
-  const outstanding = loan.balanceOutstanding;
-  const instOut = loan.totalInstallments - loan.installmentsPaid;
-  const netDue = Math.max(0, outstanding - (loan.eligibleCollateral ?? 0));
 
   return [
     idx + 1,                                               // 0  No
@@ -101,27 +102,27 @@ function buildStandardRow(
     loan.interestMethod === "flat" ? "Flat" : "Declining", // 18 Method
     loan.loanOfficer.name,                                 // 19 Loan Officer
     loan.disbursedAmount,                                  // 20 Disbursed Amount
-    toExcelDate(loan.disbursementDate),                    // 21 Disbursement Date
-    toExcelDate(loan.agreedMaturityDate),                  // 22 Maturity Date
+    toDate(loan.disbursementDate),                         // 21 Disbursement Date
+    toDate(loan.agreedMaturityDate),                       // 22 Maturity Date
     loan.repaymentFrequencyDays,                           // 23 Frequency (Days)
     loan.gracePeriodDays,                                  // 24 Grace Period
-    toExcelDate(loan.firstPaymentDate),                    // 25 First Payment Date
-    toExcelDate(loan.lastPaymentDate),                     // 26 Last Payment Date
-    toExcelDate(loan.arrearsStartDate),                    // 27 Arrears Start
-    toExcelDate(cutoffDate),                               // 28 Cut-Off Date
+    toDate(loan.firstPaymentDate),                         // 25 First Payment Date
+    toDate(loan.lastPaymentDate),                          // 26 Last Payment Date
+    toDate(loan.arrearsStartDate),                         // 27 Arrears Start
+    toDate(cutoffDate),                                    // 28 Cut-Off Date
     loan.totalInstallments,                                // 29 Total Installments
     loan.installmentsPaid,                                 // 30 Paid Installments
-    instOut,                                               // 31 Outstanding Installments
+    undefined,                                             // 31 Outstanding Installments — template formula
     loan.amountRepaidPrincipal,                            // 32 Amount Repaid
-    outstanding,                                           // 33 Balance Outstanding
-    loan.eligibleCollateral ?? 0,                          // 34 Eligible Collateral
-    netDue,                                                // 35 Net Amount Due
+    undefined,                                             // 33 Balance Outstanding — template formula
+    undefined,                                             // 34 Eligible Collateral — template formula
+    undefined,                                             // 35 Net Amount Due — template formula
     loan.daysOverdue,                                      // 36 Days Overdue
     loan.loanClass,                                        // 37 Class
     Number(loan.provisioningRate) / 100,                   // 38 Provisioning Rate (decimal)
-    loan.provisionRequired,                                // 39 Provision Required
+    undefined,                                             // 39 Provision Required — template formula
     loan.previousProvision,                                // 40 Previous Provisions
-    loan.additionalProvision,                              // 41 Additional Provisions
+    undefined,                                             // 41 Additional Provisions — template formula
   ];
 }
 
@@ -154,16 +155,16 @@ function buildWrittenOffRow(loan: LoanWithRel): RowValue[] {
     cu.sector,                                             // 11 Sector
     cu.cell,                                               // 12 Cell
     cu.village,                                            // 13 Village
-    toExcelDate(loan.disbursementDate),                    // 14 Disbursement Date
+    toDate(loan.disbursementDate),                         // 14 Disbursement Date
     loan.disbursedAmount,                                  // 15 Disbursed Amount
-    toExcelDate(loan.agreedMaturityDate),                  // 16 Maturity Date
+    toDate(loan.agreedMaturityDate),                       // 16 Maturity Date
     loan.amountRepaidPrincipal,                            // 17 Amount Repaid
-    loan.balanceOutstanding,                               // 18 Balance Outstanding
+    undefined,                                             // 18 Balance Outstanding — template formula
     0,                                                     // 19 Security Savings
-    loan.balanceOutstanding,                               // 20 Amount Written Off
-    toExcelDate(loan.writtenOffDate),                      // 21 Date of Write Off
+    undefined,                                             // 20 Amount Written Off — template formula
+    toDate(loan.writtenOffDate),                           // 21 Date of Write Off
     0,                                                     // 22 Recoveries
-    loan.balanceOutstanding,                               // 23 Remaining Balance
+    undefined,                                             // 23 Remaining Balance — template formula
   ];
 }
 
@@ -361,7 +362,11 @@ function reconstructAsOfCutoff(loan: LoanWithRel, cutoffDate: Date, cutoffEnd: D
 
   return {
     ...loan,
+    // balanceOutstanding is kept for internal filtering/classification only — the
+    // sheet itself no longer takes it directly, it's derived by the template's
+    // own formula from disbursedAmount and amountRepaidPrincipal below.
     balanceOutstanding,
+    amountRepaidPrincipal: principalPaid,
     daysOverdue,
     arrearsStartDate,
     loanClass,
