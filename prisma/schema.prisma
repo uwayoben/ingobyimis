@@ -159,7 +159,7 @@ model User {
 model Customer {
   id                    String    @id @default(cuid())
   names                 String
-  nationalId            String    @unique
+  nationalId            String
   dateOfBirth           DateTime
   gender                String
   province              String
@@ -186,6 +186,8 @@ model Customer {
 
   loans                 Loan[]
   payments              Payment[]
+
+  @@unique([nationalId, companyId])
 }
 
 model Loan {

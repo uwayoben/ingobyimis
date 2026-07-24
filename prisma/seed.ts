@@ -131,7 +131,7 @@ async function main() {
   // ── 3. Customers ────────────────────────────────────────────────────────────
   const customers = await Promise.all([
     prisma.customer.upsert({
-      where: { nationalId: "1199080000001118" },
+      where: { nationalId_companyId: { nationalId: "1199080000001118", companyId: ingobyi.id } },
       update: {},
       create: {
         names: "Marie Uwase", nationalId: "1199080000001118",
@@ -145,7 +145,7 @@ async function main() {
       },
     }),
     prisma.customer.upsert({
-      where: { nationalId: "1198580000002119" },
+      where: { nationalId_companyId: { nationalId: "1198580000002119", companyId: ingobyi.id } },
       update: {},
       create: {
         names: "Patrick Nzabonimpa", nationalId: "1198580000002119",
@@ -159,7 +159,7 @@ async function main() {
       },
     }),
     prisma.customer.upsert({
-      where: { nationalId: "1199280000003120" },
+      where: { nationalId_companyId: { nationalId: "1199280000003120", companyId: ingobyi.id } },
       update: {},
       create: {
         names: "Claudine Mukamazimpaka", nationalId: "1199280000003120",
@@ -172,7 +172,7 @@ async function main() {
       },
     }),
     prisma.customer.upsert({
-      where: { nationalId: "1198880000004121" },
+      where: { nationalId_companyId: { nationalId: "1198880000004121", companyId: ingobyi.id } },
       update: {},
       create: {
         names: "Samuel Hategekimana", nationalId: "1198880000004121",
@@ -186,7 +186,7 @@ async function main() {
       },
     }),
     prisma.customer.upsert({
-      where: { nationalId: "1199580000005122" },
+      where: { nationalId_companyId: { nationalId: "1199580000005122", companyId: ingobyi.id } },
       update: {},
       create: {
         names: "Vestine Nyiramana", nationalId: "1199580000005122",
