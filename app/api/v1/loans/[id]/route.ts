@@ -177,6 +177,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       const totalInterestScheduled       = schedule.reduce((s, r) => s + r.interestDue,      0);
 
       updateData.disbursementDate       = disbDate;
+      updateData.disbursementReference  = body.disbursementReference ? String(body.disbursementReference).trim() || null : null;
       updateData.disbursedAmount        = disburseAmount;
       updateData.balanceOutstanding     = disburseAmount;
       updateData.firstPaymentDate       = firstPmt;
@@ -244,6 +245,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         }
 
         // Debit disbursed principal
+        const disbRef = updateData.disbursementReference as string | null;
         await tx.ledgerEntry.create({
           data: {
             companyId:     auth.companyId!,
@@ -251,7 +253,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
             amount:        disburseAmount,
             balanceBefore: totalUpfrontFees > 0 ? afterFees : before,
             balanceAfter:  afterDisb,
-            description:   `Loan disbursement — ${id}`,
+            description:   `Loan disbursement — ${id}${disbRef ? ` (Ref: ${disbRef})` : ""}`,
             referenceId:   id,
             createdById:   auth.userId,
           },

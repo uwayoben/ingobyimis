@@ -29,9 +29,10 @@ const statusConfig: Record<string, { variant: "danger" | "warning" | "info" | "s
   written_off: { variant: "danger",  label: "Written Off" },
 };
 
-const methodConfig: Record<string, { variant: "success" | "info" | "neutral"; label: string }> = {
+const methodConfig: Record<string, { variant: "success" | "info" | "warning" | "neutral"; label: string }> = {
   cash:          { variant: "success", label: "Cash" },
   bank_transfer: { variant: "info",    label: "Bank Transfer" },
+  bank_deposit:  { variant: "warning", label: "Bank Deposit" },
   mobile_money:  { variant: "neutral", label: "Mobile Money" },
 };
 

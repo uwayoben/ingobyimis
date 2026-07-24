@@ -113,6 +113,7 @@ export default function LoansPage() {
       "No.", "Loan ID", "Customer", "Purpose", "Economic Sector",
       "Loan Amount (RWF)", "Disbursed (RWF)", "Outstanding (RWF)",
       "Total Repayable (RWF)", "Total Paid (RWF)",
+      "Interest Paid (RWF)", "Penalty (RWF)", "Penalty Paid (RWF)", "Total Outstanding — Principal+Interest+Penalty (RWF)",
       "Interest Rate (%/mo)", "Mgmt Fee (%/mo)", "Proc Fee (%/mo)", "Method", "Installments", "Paid",
       "Status", "Class", "Days Overdue",
       "Disbursement Date", "Maturity Date", "Next Payment Date",
@@ -121,6 +122,7 @@ export default function LoansPage() {
     const dataRows = displayed.map((l, i) => {
       const totalPaid = l.amountRepaidPrincipal + l.amountRepaidInterest +
         (l.amountRepaidMgmtFee ?? 0) + (l.amountRepaidProcessingFee ?? 0) + (l.penaltyPaid ?? 0);
+      const totalOutstandingCombined = l.balanceOutstanding + calcInterestRemaining(l) + l.penaltyAmount;
       return [
         i + 1,
         l.id.toUpperCase(),
@@ -132,6 +134,10 @@ export default function LoansPage() {
         l.balanceOutstanding,
         l.totalRepayable,
         totalPaid,
+        l.amountRepaidInterest,
+        l.penaltyAmount,
+        l.penaltyPaid ?? 0,
+        totalOutstandingCombined,
         Number(l.annualInterestRate) / 12,
         Number(l.managementFeeRate) / 12,
         Number((l as any).processingFeeRate ?? 0) / 12,
@@ -147,29 +153,37 @@ export default function LoansPage() {
       ];
     });
 
-    const titleRow = [`${companyName} — Loan Portfolio Export`, ...Array(21).fill("")];
-    const dateRow  = [`Generated: ${today}  ·  ${displayed.length} loans`, ...Array(21).fill("")];
-    const blankRow = Array(22).fill("");
+    const sumCol = (idx: number) => dataRows.reduce((s, r) => s + (Number(r[idx]) || 0), 0);
+    const totalsRow: (string | number)[] = Array(26).fill("");
+    totalsRow[0] = "TOTALS";
+    [5, 6, 7, 8, 9, 10, 11, 12, 13].forEach((idx) => { totalsRow[idx] = sumCol(idx); });
 
-    const wsData = [titleRow, dateRow, blankRow, headerRow, ...dataRows];
+    const titleRow = [`${companyName} — Loan Portfolio Export`, ...Array(25).fill("")];
+    const dateRow  = [`Generated: ${today}  ·  ${displayed.length} loans`, ...Array(25).fill("")];
+    const blankRow = Array(26).fill("");
+
+    const wsData = [titleRow, dateRow, blankRow, headerRow, ...dataRows, totalsRow];
     const ws = XLSXStyle.utils.aoa_to_sheet(wsData);
 
     ws["!cols"] = [
       { wch: 5 }, { wch: 14 }, { wch: 24 }, { wch: 22 }, { wch: 28 },
       { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 20 }, { wch: 16 },
+      { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 22 },
       { wch: 16 }, { wch: 16 }, { wch: 14 }, { wch: 12 }, { wch: 13 }, { wch: 8 },
       { wch: 13 }, { wch: 14 }, { wch: 13 },
       { wch: 16 }, { wch: 14 }, { wch: 16 },
     ];
+    const totalsRowIndex0 = dataRows.length + 4; // 0-based row index of the totals row
     ws["!merges"] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: 21 } },
-      { s: { r: 1, c: 0 }, e: { r: 1, c: 21 } },
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 25 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 25 } },
+      { s: { r: totalsRowIndex0, c: 0 }, e: { r: totalsRowIndex0, c: 4 } },
     ];
 
     const GREEN = "166534"; const WHITE = "FFFFFF"; const LGRAY = "F3F4F6";
     const BORDER = { style: "thin", color: { rgb: "D1D5DB" } };
     const allBorder = { top: BORDER, bottom: BORDER, left: BORDER, right: BORDER };
-    const cols = ["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V"];
+    const cols = ["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z"];
 
     const titleCell = ws["A1"];
     if (titleCell) titleCell.s = { font: { bold: true, sz: 16, color: { rgb: WHITE }, name: "Calibri" }, fill: { fgColor: { rgb: GREEN } }, alignment: { horizontal: "center", vertical: "center" } };
@@ -186,6 +200,9 @@ export default function LoansPage() {
       approved: "1D4ED8", written_off: "374151", rejected: "9CA3AF",
     };
 
+    const MONEY_COLS = [5, 6, 7, 8, 9, 10, 11, 12, 13];
+    const CENTER_COLS = [0, 16, 17, 20];
+
     dataRows.forEach((row, ri) => {
       const rowIndex = ri + 5;
       const isAlt = ri % 2 === 1;
@@ -196,22 +213,36 @@ export default function LoansPage() {
         cell.s = {
           font: { sz: 10, name: "Calibri" },
           fill: { fgColor: { rgb: isAlt ? LGRAY : WHITE } },
-          alignment: { horizontal: [0,12,13,16].includes(ci) ? "center" : [5,6,7,8,9].includes(ci) ? "right" : "left", vertical: "center" },
+          alignment: { horizontal: CENTER_COLS.includes(ci) ? "center" : MONEY_COLS.includes(ci) ? "right" : "left", vertical: "center" },
           border: allBorder,
         };
         // Status cell coloring
-        if (ci === 14) {
+        if (ci === 20) {
           const sc = statusColors[String(row[ci])] ?? "374151";
           cell.s.font = { ...cell.s.font, bold: true, color: { rgb: sc } };
         }
         // Overdue days in red
-        if (ci === 16 && Number(row[ci]) > 0) cell.s.font = { ...cell.s.font, bold: true, color: { rgb: "DC2626" } };
-        // Outstanding in red
-        if (ci === 7 && Number(row[ci]) > 0) cell.s.font = { ...cell.s.font, bold: true, color: { rgb: "DC2626" } };
+        if (ci === 22 && Number(row[ci]) > 0) cell.s.font = { ...cell.s.font, bold: true, color: { rgb: "DC2626" } };
+        // Outstanding / Penalty / Total Outstanding in red
+        if ([7, 11, 13].includes(ci) && Number(row[ci]) > 0) cell.s.font = { ...cell.s.font, bold: true, color: { rgb: "DC2626" } };
       });
     });
 
-    ws["!rows"] = [{ hpt: 36 }, { hpt: 20 }, { hpt: 8 }, { hpt: 24 }, ...dataRows.map(() => ({ hpt: 18 }))];
+    // Totals row styling
+    const totalsRowNum = dataRows.length + 5;
+    cols.forEach((col, ci) => {
+      const addr = `${col}${totalsRowNum}`;
+      const cell = ws[addr];
+      if (!cell) return;
+      cell.s = {
+        font: { sz: 10, bold: true, name: "Calibri", color: { rgb: GREEN } },
+        fill: { fgColor: { rgb: "D1FAE5" } },
+        alignment: { horizontal: MONEY_COLS.includes(ci) ? "right" : ci === 0 ? "left" : "center", vertical: "center" },
+        border: { top: { style: "medium", color: { rgb: GREEN } }, bottom: BORDER, left: BORDER, right: BORDER },
+      };
+    });
+
+    ws["!rows"] = [{ hpt: 36 }, { hpt: 20 }, { hpt: 8 }, { hpt: 24 }, ...dataRows.map(() => ({ hpt: 18 })), { hpt: 20 }];
 
     const wb = XLSXStyle.utils.book_new();
     XLSXStyle.utils.book_append_sheet(wb, ws, "Loans");

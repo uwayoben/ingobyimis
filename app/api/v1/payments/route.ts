@@ -18,7 +18,7 @@ const manualAllocationSchema = z.object({
 const createSchema = z.object({
   loanId:                z.string(),
   amount:                z.number().positive(),
-  method:                z.enum(["cash", "bank_transfer", "mobile_money"]),
+  method:                z.enum(["cash", "bank_transfer", "bank_deposit", "mobile_money"]),
   reference:             z.string().optional(),
   notes:                 z.string().optional(),
   date:                  z.string().optional(),

@@ -240,7 +240,7 @@ function ExpenseForm({ onSaved, onClose }: { onSaved: (e: Expense) => void; onCl
         label="Category"
         value={form.category}
         onChange={(e) => set("category", e.target.value)}
-        options={EXPENSE_CATEGORIES.map((c) => ({ value: c, label: c }))}
+        options={[{ value: "", label: "Select category..." }, ...EXPENSE_CATEGORIES.map((c) => ({ value: c, label: c }))]}
         required
       />
       <div className="grid grid-cols-2 gap-4">
@@ -502,7 +502,7 @@ function AssetForm({ onSaved, onClose }: { onSaved: (a: Asset) => void; onClose:
         label="Category"
         value={form.category}
         onChange={(e) => set("category", e.target.value)}
-        options={ASSET_CATEGORIES.map((c) => ({ value: c, label: c }))}
+        options={[{ value: "", label: "Select category..." }, ...ASSET_CATEGORIES.map((c) => ({ value: c, label: c }))]}
         required
       />
       <div className="grid grid-cols-2 gap-3">
@@ -676,6 +676,8 @@ export default function AccountingPage() {
   const [deletingAssetId,    setDeletingAssetId]    = useState<string | null>(null);
   const [markPaidExpense,    setMarkPaidExpense]    = useState<Expense | null>(null);
   const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
+  const [expenseDateFrom,    setExpenseDateFrom]    = useState("");
+  const [expenseDateTo,      setExpenseDateTo]      = useState("");
 
   const isReceptionist    = role === "receptionist";
   const canManageExpenses = ["managing_director", "loan_officer", "receptionist"].includes(role);
@@ -744,17 +746,23 @@ export default function AccountingPage() {
     } finally { setDeletingAssetId(null); }
   };
 
-  const paidExpenses   = expenses.filter((e) => e.isPaid);
   const unpaidExpenses = expenses.filter((e) => !e.isPaid);
-  const totalExpenses  = expenses.reduce((s, e) => s + e.amount, 0);
-  const totalPaid      = paidExpenses.reduce((s, e) => s + e.amount, 0);
-  const totalUnpaid    = unpaidExpenses.reduce((s, e) => s + e.amount, 0);
+
+  const dateFilteredExpenses = expenses.filter((e) => {
+    const d = e.date.slice(0, 10);
+    if (expenseDateFrom && d < expenseDateFrom) return false;
+    if (expenseDateTo && d > expenseDateTo) return false;
+    return true;
+  });
+  const totalExpenses  = dateFilteredExpenses.reduce((s, e) => s + e.amount, 0);
+  const totalPaid      = dateFilteredExpenses.filter((e) => e.isPaid).reduce((s, e) => s + e.amount, 0);
+  const totalUnpaid    = dateFilteredExpenses.filter((e) => !e.isPaid).reduce((s, e) => s + e.amount, 0);
 
   const handleExportExpenses = async (categoryFilter: string | null) => {
     const XLSXStyle = (await import("xlsx-js-style")).default;
     const companyName = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}").companyName ?? "Company" : "Company";
     const today = new Date().toLocaleDateString("en-GB");
-    const rows = categoryFilter ? expenses.filter((e) => e.category === categoryFilter) : expenses;
+    const rows = categoryFilter ? dateFilteredExpenses.filter((e) => e.category === categoryFilter) : dateFilteredExpenses;
     const label = categoryFilter ?? "All Categories";
     const headerRow = ["No.", "Date", "Category", "Description", "Amount (RWF)", "Status"];
     const dataRows = rows.map((e, i) => [
@@ -934,7 +942,7 @@ export default function AccountingPage() {
               { label: "Total Expenses",  value: formatCurrency(totalExpenses), border: "border-l-red-500",    iconBg: "bg-red-500/15 text-red-600 dark:text-red-400",       icon: <TrendingDown    className="w-5 h-5" /> },
               { label: "Paid",            value: formatCurrency(totalPaid),     border: "border-l-emerald-500",iconBg: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400", icon: <CheckCircle2 className="w-5 h-5" /> },
               { label: "Unpaid",          value: formatCurrency(totalUnpaid),   border: "border-l-amber-500",  iconBg: "bg-amber-500/15 text-amber-600 dark:text-amber-400",   icon: <Clock           className="w-5 h-5" /> },
-              { label: "Expense Entries", value: String(expenses.length),       border: "border-l-blue-500",   iconBg: "bg-blue-500/15 text-blue-600 dark:text-blue-400",      icon: <BarChart3        className="w-5 h-5" /> },
+              { label: "Expense Entries", value: String(dateFilteredExpenses.length), border: "border-l-blue-500", iconBg: "bg-blue-500/15 text-blue-600 dark:text-blue-400",      icon: <BarChart3        className="w-5 h-5" /> },
             ].map((stat, i) => (
               <motion.div
                 key={stat.label}
@@ -952,8 +960,33 @@ export default function AccountingPage() {
 
           <Card>
             <CardHeader>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between flex-wrap gap-3">
                 <CardTitle>Expense Records</CardTitle>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="date"
+                    value={expenseDateFrom}
+                    onChange={(e) => setExpenseDateFrom(e.target.value)}
+                    max={expenseDateTo || undefined}
+                    className="px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                  <span className="text-xs text-gray-400">to</span>
+                  <input
+                    type="date"
+                    value={expenseDateTo}
+                    onChange={(e) => setExpenseDateTo(e.target.value)}
+                    min={expenseDateFrom || undefined}
+                    className="px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                  {(expenseDateFrom || expenseDateTo) && (
+                    <button
+                      onClick={() => { setExpenseDateFrom(""); setExpenseDateTo(""); }}
+                      className="text-xs font-medium text-gray-400 hover:text-red-500 transition-colors"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
                 {expenses.length > 0 && (
                   <div className="relative">
                     <button
@@ -994,6 +1027,8 @@ export default function AccountingPage() {
                 <div className="px-6 py-10 text-center text-sm text-gray-400">Loading…</div>
               ) : expenses.length === 0 ? (
                 <div className="px-6 py-10 text-center text-sm text-gray-400">No expenses recorded yet.</div>
+              ) : dateFilteredExpenses.length === 0 ? (
+                <div className="px-6 py-10 text-center text-sm text-gray-400">No expenses in this date range.</div>
               ) : (
                 <table className="w-full">
                   <thead>
@@ -1004,7 +1039,7 @@ export default function AccountingPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
-                    {expenses.map((expense, i) => (
+                    {dateFilteredExpenses.map((expense, i) => (
                       <motion.tr
                         key={expense.id}
                         initial={{ opacity: 0 }}

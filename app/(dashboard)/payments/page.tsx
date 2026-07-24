@@ -137,6 +137,7 @@ function RecordPaymentForm({ onClose, onSaved }: { onClose: () => void; onSaved:
           options={[
             { value: "cash", label: "Cash" },
             { value: "bank_transfer", label: "Bank Transfer" },
+            { value: "bank_deposit", label: "Bank Deposit" },
             { value: "mobile_money", label: "Mobile Money" },
           ]}
           value={method}
@@ -166,9 +167,10 @@ function RecordPaymentForm({ onClose, onSaved }: { onClose: () => void; onSaved:
   );
 }
 
-const methodConfig: Record<string, { variant: "success" | "info" | "neutral"; label: string }> = {
+const methodConfig: Record<string, { variant: "success" | "info" | "warning" | "neutral"; label: string }> = {
   cash: { variant: "success", label: "Cash" },
   bank_transfer: { variant: "info", label: "Bank Transfer" },
+  bank_deposit: { variant: "warning", label: "Bank Deposit" },
   mobile_money: { variant: "neutral", label: "Mobile Money" },
 };
 

@@ -73,6 +73,7 @@ enum LoanDocumentType {
 enum PaymentMethod {
   cash
   bank_transfer
+  bank_deposit
   mobile_money
 }
 
@@ -209,6 +210,7 @@ model Loan {
   // Disbursement
   disbursedAmount         Int              @default(0)
   disbursementDate        DateTime?
+  disbursementReference   String?                                         // OP number / cheque number (optional)
 
   // Interest & repayment terms
   annualInterestRate      Decimal          @db.Decimal(6, 3)  // % per year, e.g. 24.000

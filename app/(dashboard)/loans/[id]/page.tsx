@@ -254,9 +254,10 @@ const DOC_TYPE_LABELS: Record<string, string> = {
   other:             "Other",
 };
 
-const METHOD_CONFIG: Record<string, { variant: "success" | "info" | "neutral"; label: string }> = {
+const METHOD_CONFIG: Record<string, { variant: "success" | "info" | "warning" | "neutral"; label: string }> = {
   cash:          { variant: "success", label: "Cash" },
   bank_transfer: { variant: "info",    label: "Bank Transfer" },
+  bank_deposit:  { variant: "warning", label: "Bank Deposit" },
   mobile_money:  { variant: "neutral", label: "Mobile Money" },
 };
 
@@ -851,6 +852,7 @@ function RecordPaymentForm({
           options={[
             { value: "cash",          label: "Cash" },
             { value: "bank_transfer", label: "Bank Transfer" },
+            { value: "bank_deposit",  label: "Bank Deposit" },
             { value: "mobile_money",  label: "Mobile Money" },
           ]}
           value={method}
@@ -2144,6 +2146,7 @@ function EditPaymentForm({ payment, onClose, onSaved }: { payment: Payment & { r
           options={[
             { value: "cash",          label: "Cash" },
             { value: "bank_transfer", label: "Bank Transfer" },
+            { value: "bank_deposit",  label: "Bank Deposit" },
             { value: "mobile_money",  label: "Mobile Money" },
           ]}
           value={method}
@@ -2202,6 +2205,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
   const [showTopUpModal,          setShowTopUpModal]          = useState(false);
   const [showContractModal, setShowContractModal] = useState(false);
   const [disburseDate,      setDisburseDate]      = useState(() => new Date().toISOString().slice(0, 10));
+  const [disburseReference, setDisburseReference] = useState("");
   const [showDeleteModal,   setShowDeleteModal]   = useState(false);
   const [deleting,          setDeleting]          = useState(false);
   const [deleteError,       setDeleteError]       = useState("");
@@ -2243,7 +2247,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
       const body =
         action === "approve"  ? { status: "approved" } :
         action === "reject"   ? { status: "rejected" } :
-        { status: "active", disbursementDate: disburseDate };
+        { status: "active", disbursementDate: disburseDate, disbursementReference: disburseReference.trim() || undefined };
       const res  = await apiFetch(`/api/v1/loans/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -2342,7 +2346,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
             </>
           )}
           {loan.status === "approved" && canDisburse && (
-            <Button size="sm" icon={<ArrowDownToLine className="w-4 h-4" />} onClick={() => setActionModal("disburse")}>Disburse</Button>
+            <Button size="sm" icon={<ArrowDownToLine className="w-4 h-4" />} onClick={() => { setDisburseReference(""); setActionModal("disburse"); }}>Disburse</Button>
           )}
 
           {/* ── Record Payment ── */}
@@ -2671,6 +2675,9 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                         <div>
                           <p className="text-xs font-medium text-gray-900 dark:text-gray-100">{step.label}</p>
                           {step.date && <p className="text-xs text-gray-400">{formatDate(step.date)}</p>}
+                          {step.label === "Disbursed" && loan.disbursementReference && (
+                            <p className="text-xs text-gray-400">Ref: {loan.disbursementReference}</p>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -3420,6 +3427,14 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                 className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-green-500"
               />
               <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Backdate if recording a past disbursement</p>
+              <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1 mt-3">OP / Cheque Number <span className="text-gray-400 font-normal">(optional)</span></label>
+              <input
+                type="text"
+                value={disburseReference}
+                onChange={(e) => setDisburseReference(e.target.value)}
+                placeholder="e.g. OP-00123 or Cheque #4521"
+                className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-green-500"
+              />
             </div>
           )}
           <div className="flex justify-end gap-3">

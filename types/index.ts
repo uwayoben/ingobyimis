@@ -115,6 +115,7 @@ export interface Loan {
   amount: number;
   disbursedAmount: number;
   disbursementDate?: string;
+  disbursementReference?: string;
   annualInterestRate: number;
   interestMethod: InterestMethod;
   bulletRepayment: boolean;
