@@ -222,6 +222,272 @@ function trueOutstanding(loan: Loan): number {
   return loan.balanceOutstanding + interestRemaining(loan) + mgmtFeeRemaining(loan) + processingFeeRemaining(loan) + loan.penaltyAmount + (loan.additionalInterest ?? 0) + (loan.additionalMgmtFee ?? 0) + (loan.additionalProcessingFee ?? 0);
 }
 
+function openLoanReport(
+  loan: Loan & { customer?: any; loanOfficer?: any; approvedBy?: any },
+  payments: Payment[],
+  installments: Installment[],
+  companyName: string,
+) {
+  const fmtRWF   = (n: number) => "RWF " + Math.round(n ?? 0).toLocaleString();
+  const fmtD     = (d: string | null | undefined) => d ? new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "—";
+  const today    = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+  const reportId = `LR-${loan.id.toUpperCase()}`;
+  const c        = loan.customer ?? {};
+
+  const hasMgmt = loan.managementFeeRate > 0;
+  const hasProc = (loan.processingFeeRate ?? 0) > 0;
+  const intRemaining = interestRemaining(loan) + (loan.additionalInterest ?? 0);
+  const mgmtFeeRepaid = loan.amountRepaidMgmtFee ?? 0;
+  const procFeeRepaid = loan.amountRepaidProcessingFee ?? 0;
+  const totalPaid = loan.amountRepaidPrincipal + loan.amountRepaidInterest + mgmtFeeRepaid + procFeeRepaid + (loan.penaltyPaid ?? 0);
+  const totalOuts = trueOutstanding(loan);
+
+  const address = [c.village, c.cell, c.sector, c.district, c.province].filter(Boolean).join(", ") || "—";
+
+  const scheduleRows = installments.map((r, i) => `
+    <tr style="background:${i % 2 === 0 ? "#fff" : "#f9fafb"}">
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:center">${r.installmentNo}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb">${fmtD(r.dueDate)}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;color:#166534">${fmtRWF(r.principalDue)}</td>
+      ${hasMgmt ? `<td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;color:#7e22ce">${fmtRWF(r.managementFeeDue)}</td>` : ""}
+      ${hasProc ? `<td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;color:#0369a1">${fmtRWF(r.processingFeeDue ?? 0)}</td>` : ""}
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;color:#b45309">${fmtRWF(r.interestDue)}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-weight:700">${fmtRWF(r.totalDue)}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb">${r.amountPaid > 0 ? fmtRWF(r.amountPaid) : "—"}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-transform:capitalize">${r.status}</td>
+    </tr>`).join("");
+
+  const schedTotals = {
+    principal: installments.reduce((s, r) => s + r.principalDue, 0),
+    mgmt:      installments.reduce((s, r) => s + r.managementFeeDue, 0),
+    proc:      installments.reduce((s, r) => s + (r.processingFeeDue ?? 0), 0),
+    interest:  installments.reduce((s, r) => s + r.interestDue, 0),
+    total:     installments.reduce((s, r) => s + r.totalDue, 0),
+    paid:      installments.reduce((s, r) => s + r.amountPaid, 0),
+  };
+
+  const paymentRows = payments.map((p, i) => {
+    const m = METHOD_CONFIG[p.method] ?? { label: p.method };
+    return `
+    <tr style="background:${i % 2 === 0 ? "#fff" : "#f9fafb"}">
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-family:monospace">${p.reference}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb">${fmtD(p.date)}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;font-weight:700">${fmtRWF(p.amount)}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;color:#16a34a">${fmtRWF(p.principal)}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;color:#b45309">${fmtRWF(p.interest)}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;color:#dc2626">${p.penalty > 0 ? fmtRWF(p.penalty) : "—"}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb;text-transform:capitalize">${m.label}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e5e7eb">${p.recordedByName ?? "—"}</td>
+    </tr>`;
+  }).join("");
+
+  const payTotals = {
+    amount:    payments.reduce((s, p) => s + p.amount, 0),
+    principal: payments.reduce((s, p) => s + p.principal, 0),
+    interest:  payments.reduce((s, p) => s + p.interest, 0),
+    penalty:   payments.reduce((s, p) => s + p.penalty, 0),
+  };
+
+  const spouseBox = c.maritalStatus === "Married" && (c.spouseName || c.spousePhone)
+    ? `<div class="box"><h3>Spouse Information</h3>
+        <p><strong>Name:</strong> ${c.spouseName ?? "—"}<br/>
+        <strong>Phone:</strong> ${c.spousePhone ?? "—"}<br/>
+        <strong>National ID:</strong> ${c.spouseIdNumber ?? "—"}<br/>
+        <strong>Property Regime:</strong> ${c.maritalPropertyRegime ?? "—"}</p></div>`
+    : "";
+
+  const summaryStats: { label: string; value: string }[] = [
+    { label: "Loan Amount",           value: fmtRWF(loan.amount) },
+    { label: "Disbursed Amount",      value: fmtRWF(loan.disbursedAmount || loan.amount) },
+    { label: "Total Repayable",       value: fmtRWF(loan.totalRepayable) },
+    { label: "Total Paid",            value: fmtRWF(totalPaid) },
+    { label: "Total Outstanding",     value: fmtRWF(totalOuts) },
+    { label: "Principal Repaid",      value: fmtRWF(loan.amountRepaidPrincipal) },
+    { label: "Principal Remaining",   value: fmtRWF(loan.balanceOutstanding) },
+    { label: "Interest Paid",         value: fmtRWF(loan.amountRepaidInterest) },
+    { label: "Interest Remaining",    value: fmtRWF(intRemaining) },
+    ...(hasMgmt ? [
+      { label: "Mgmt Fee Paid",       value: fmtRWF(mgmtFeeRepaid) },
+      { label: "Mgmt Fee Remaining",  value: fmtRWF(mgmtFeeRemaining(loan)) },
+    ] : []),
+    ...(hasProc ? [
+      { label: "Proc Fee Paid",       value: fmtRWF(procFeeRepaid) },
+      { label: "Proc Fee Remaining",  value: fmtRWF(processingFeeRemaining(loan)) },
+    ] : []),
+    { label: "Penalty Outstanding",   value: fmtRWF(loan.penaltyAmount) },
+    { label: "Penalty Paid",          value: fmtRWF(loan.penaltyPaid ?? 0) },
+    ...((loan.penaltyWaived ?? 0) > 0 ? [{ label: "Penalty Waived", value: fmtRWF(loan.penaltyWaived) }] : []),
+    ...((loan.additionalMgmtFee ?? 0) > 0 ? [{ label: "Additional Mgmt Fee Outstanding", value: fmtRWF(loan.additionalMgmtFee!) }] : []),
+    ...((loan.additionalProcessingFee ?? 0) > 0 ? [{ label: "Additional Proc Fee Outstanding", value: fmtRWF(loan.additionalProcessingFee!) }] : []),
+    ...(loan.topUpAmount > 0 ? [{ label: "Top-Up Amount", value: fmtRWF(loan.topUpAmount) }] : []),
+  ];
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>${reportId}</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#1a1a1a;background:#fff}
+  .page{max-width:794px;margin:0 auto;padding:28px}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;padding-bottom:14px;border-bottom:3px solid #166534}
+  .co-name{font-size:18px;font-weight:700;color:#166534}.co-sub{font-size:10px;color:#888;margin-top:2px}
+  .title h1{font-size:18px;font-weight:800;color:#166534;text-align:right}.title p{font-size:9px;color:#666;text-align:right;line-height:1.5}
+  h2.section{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:0.6px;color:#166534;margin:14px 0 8px;padding-bottom:5px;border-bottom:2px solid #e5e7eb}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .grid3{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .box{background:#f8fafb;border:1px solid #e5e7eb;border-radius:6px;padding:9px}
+  .box h3{font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#9ca3af;margin-bottom:4px}
+  .box p{font-size:9.5px;line-height:1.55;color:#374151}.box strong{color:#111}
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+  .stat{background:#f8fafb;border:1px solid #e5e7eb;border-left:3px solid #166534;border-radius:5px;padding:6px 8px}
+  .box,.stat,tr,h2.section{page-break-inside:avoid;break-inside:avoid}
+  thead{display:table-header-group}
+  tfoot{display:table-row-group}
+  .stat b{display:block;font-size:11px;color:#111}
+  .stat span{font-size:7.5px;color:#6b7280;text-transform:uppercase;letter-spacing:0.3px}
+  table{width:100%;border-collapse:collapse;margin-top:3px;font-size:8.5px}
+  thead th{background:#052e16;color:#fff;text-align:left;padding:5px 6px;font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.3px}
+  tbody td{padding:4px 6px!important}
+  tfoot td{background:#f0fdf4;font-weight:700;padding:5px 6px;border-top:2px solid #16a34a;font-size:8.5px;color:#166534}
+  .toolbar{position:fixed;top:14px;right:14px;display:flex;gap:8px}
+  .btn-dl{background:#166534;color:#fff;border:none;padding:7px 16px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer}
+  .btn-pr{background:#fff;color:#166534;border:2px solid #166534;padding:7px 16px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer}
+  .footer{margin-top:16px;padding-top:10px;border-top:1px solid #e5e7eb;font-size:9px;color:#9ca3af;text-align:center}
+  @page{size:A4 portrait;margin:10mm}
+  @media print{.toolbar{display:none}.page{padding:16px}}
+</style></head>
+<body>
+<div class="toolbar">
+  <button class="btn-pr" onclick="window.print()">🖨 Print</button>
+  <button class="btn-dl" id="dlBtn" onclick="downloadPDF()">⬇ Download PDF</button>
+</div>
+<div class="page" id="content">
+  <div class="header">
+    <div><div class="co-name">${companyName}</div><div class="co-sub">NDFSP</div></div>
+    <div class="title"><h1>LOAN REPORT</h1><p>Ref: <strong>${reportId}</strong><br/>Generated: ${today}</p></div>
+  </div>
+
+  <h2 class="section">Customer Details</h2>
+  <div class="grid2">
+    <div class="box"><h3>Personal Information</h3>
+      <p><strong>Full Name:</strong> ${c.names ?? loan.customerName ?? "—"}<br/>
+      <strong>National ID:</strong> ${c.nationalId ?? "—"}<br/>
+      <strong>Date of Birth:</strong> ${fmtD(c.dateOfBirth)}<br/>
+      <strong>Gender:</strong> ${c.gender ?? "—"} &nbsp;·&nbsp; <strong>Marital Status:</strong> ${c.maritalStatus ?? "—"}<br/>
+      <strong>Phone:</strong> ${c.phone ?? "—"} &nbsp;·&nbsp; <strong>Email:</strong> ${c.email ?? "—"}</p></div>
+    <div class="box"><h3>Address &amp; Employment</h3>
+      <p><strong>Address:</strong> ${address}<br/>
+      <strong>Employment Status:</strong> ${c.employmentStatus ?? "—"}<br/>
+      <strong>Employer:</strong> ${c.employerName ?? "—"}<br/>
+      <strong>Relationship with NDFSP:</strong> ${c.relationshipWithNdfsp ?? "—"}</p></div>
+    ${spouseBox}
+  </div>
+
+  <h2 class="section">Loan Details</h2>
+  <div class="grid3">
+    <div class="box"><h3>Loan Overview</h3>
+      <p><strong>Loan ID:</strong> ${loan.id.toUpperCase()}<br/>
+      <strong>Status:</strong> ${loan.status} &nbsp;·&nbsp; <strong>Class:</strong> ${loan.loanClass}<br/>
+      <strong>Purpose:</strong> ${loan.purpose}<br/>
+      <strong>Branch:</strong> ${loan.branchName ?? "—"}<br/>
+      <strong>Loan Officer:</strong> ${loan.loanOfficer?.name ?? "—"}<br/>
+      <strong>Approved By:</strong> ${loan.approvedBy?.name ?? "—"}</p></div>
+    <div class="box"><h3>Terms</h3>
+      <p><strong>Interest Rate:</strong> ${(loan.annualInterestRate / 12).toFixed(2)}%/month (${loan.interestMethod})<br/>
+      ${hasMgmt ? `<strong>Mgmt Fee Rate:</strong> ${(loan.managementFeeRate / 12).toFixed(2)}%/month<br/>` : ""}
+      ${hasProc ? `<strong>Proc Fee Rate:</strong> ${((loan.processingFeeRate ?? 0) / 12).toFixed(2)}%/month<br/>` : ""}
+      <strong>Repayment:</strong> Every ${loan.repaymentFrequencyDays} day(s)<br/>
+      <strong>Grace Period:</strong> ${loan.gracePeriodDays} day(s)<br/>
+      <strong>Bullet Repayment:</strong> ${loan.bulletRepayment ? "Yes" : "No"}</p></div>
+    <div class="box"><h3>Dates &amp; Progress</h3>
+      <p><strong>Disbursement Date:</strong> ${fmtD(loan.disbursementDate)}<br/>
+      <strong>First Payment:</strong> ${fmtD(loan.firstPaymentDate)}<br/>
+      <strong>Maturity Date:</strong> ${fmtD(loan.agreedMaturityDate)}<br/>
+      <strong>Installments:</strong> ${loan.installmentsPaid} of ${loan.totalInstallments} paid<br/>
+      <strong>Created:</strong> ${fmtD(loan.createdAt)} &nbsp;·&nbsp; <strong>Approved:</strong> ${fmtD(loan.approvedAt)}<br/>
+      ${loan.isRestructured ? `<strong>Restructured:</strong> Yes<br/>` : ""}</p></div>
+  </div>
+
+  <h2 class="section">Financial Summary</h2>
+  <div class="stats">
+    ${summaryStats.map((s) => `<div class="stat"><b>${s.value}</b><span>${s.label}</span></div>`).join("")}
+  </div>
+
+  <h2 class="section">Repayment Schedule (${installments.length} installments)</h2>
+  <table>
+    <thead><tr>
+      <th>#</th><th>Due Date</th><th>Principal</th>
+      ${hasMgmt ? "<th>Mgmt Fee</th>" : ""}
+      ${hasProc ? "<th>Proc Fee</th>" : ""}
+      <th>Interest</th><th>Total Due</th><th>Paid</th><th>Status</th>
+    </tr></thead>
+    <tbody>${scheduleRows}</tbody>
+    <tfoot><tr>
+      <td colspan="2">TOTALS</td>
+      <td>${fmtRWF(schedTotals.principal)}</td>
+      ${hasMgmt ? `<td>${fmtRWF(schedTotals.mgmt)}</td>` : ""}
+      ${hasProc ? `<td>${fmtRWF(schedTotals.proc)}</td>` : ""}
+      <td>${fmtRWF(schedTotals.interest)}</td>
+      <td>${fmtRWF(schedTotals.total)}</td>
+      <td>${fmtRWF(schedTotals.paid)}</td>
+      <td></td>
+    </tr></tfoot>
+  </table>
+
+  <h2 class="section">Payment History (${payments.length} record${payments.length !== 1 ? "s" : ""})</h2>
+  ${payments.length === 0 ? `<p style="font-size:11px;color:#9ca3af;padding:8px 0">No payments recorded yet.</p>` : `
+  <table>
+    <thead><tr>
+      <th>Reference</th><th>Date</th><th>Total</th><th>Principal</th><th>Interest</th><th>Penalty</th><th>Method</th><th>Recorded By</th>
+    </tr></thead>
+    <tbody>${paymentRows}</tbody>
+    <tfoot><tr>
+      <td colspan="2">TOTALS</td>
+      <td>${fmtRWF(payTotals.amount)}</td>
+      <td>${fmtRWF(payTotals.principal)}</td>
+      <td>${fmtRWF(payTotals.interest)}</td>
+      <td>${fmtRWF(payTotals.penalty)}</td>
+      <td colspan="2"></td>
+    </tr></tfoot>
+  </table>`}
+
+  <div class="footer">Generated from ipfundoMis</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script>
+  function downloadPDF(){
+    var btn=document.getElementById('dlBtn');
+    btn.disabled=true;btn.textContent='Generating…';
+    window.scrollTo(0,0);
+    var el=document.getElementById('content');
+    var marginMm=8, pageWidthMm=210;
+    var usableWidthMm=pageWidthMm-marginMm*2;
+    var aspect=el.scrollHeight/el.scrollWidth;
+    var pageHeightMm=Math.max(usableWidthMm*aspect+marginMm*2, 100);
+    html2pdf().set({
+      margin:[marginMm,marginMm,marginMm,marginMm],filename:'${reportId}.pdf',
+      image:{type:'jpeg',quality:0.98},
+      html2canvas:{
+        scale:2,useCORS:true,logging:false,
+        scrollX:0,scrollY:0,
+        windowWidth:el.scrollWidth,
+        windowHeight:el.scrollHeight
+      },
+      jsPDF:{unit:'mm',format:[pageWidthMm,pageHeightMm],orientation:'portrait'},
+      pagebreak:{mode:['avoid-all']}
+    }).from(el).save().then(function(){
+      btn.disabled=false;btn.textContent='⬇ Download PDF';
+    }).catch(function(err){
+      btn.disabled=false;btn.textContent='⬇ Download PDF';
+      alert('Failed to generate PDF: '+err);
+    });
+  }
+</script>
+</body></html>`;
+  const w = window.open("", "_blank", "width=850,height=1000");
+  if (!w) return;
+  w.document.write(html);
+  w.document.close();
+}
+
 const INSTALLMENT_STATUS_COLOR: Record<string, string> = {
   paid:    "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
   partial: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
@@ -2299,7 +2565,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
 
   const progressPct    = loan.totalInstallments > 0 ? (loan.installmentsPaid / loan.totalInstallments) * 100 : 0;
   const totalOuts      = trueOutstanding(loan);
-  const intRemaining   = interestRemaining(loan);
+  const intRemaining   = interestRemaining(loan) + (loan.additionalInterest ?? 0);
   const mgmtFeeRepaid  = loan.amountRepaidMgmtFee ?? 0;
   const procFeeRepaid  = loan.amountRepaidProcessingFee ?? 0;
   const totalPaid      = loan.amountRepaidPrincipal + loan.amountRepaidInterest + mgmtFeeRepaid + procFeeRepaid + (loan.penaltyPaid ?? 0);
@@ -2362,6 +2628,16 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
               Waive Penalty
             </Button>
           )}
+
+          {/* ── Loan Report ── */}
+          <Button
+            variant="outline"
+            size="sm"
+            icon={<FileText className="w-4 h-4" />}
+            onClick={() => openLoanReport(loan, payments, installments, companyName)}
+          >
+            Loan Report
+          </Button>
 
           {/* ── More actions: Add Charges, Top Up, Restructure, Edit, Agreement, Delete ── */}
           <MoreActionsMenu items={[
@@ -2498,14 +2774,6 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                   )}
                 </div>
               </div>
-              {(loan.additionalInterest ?? 0) > 0 && (
-                <div className="flex justify-between">
-                  <span className="text-orange-500 dark:text-orange-400">Additional Interest</span>
-                  <span className="font-semibold text-orange-600 dark:text-orange-400">
-                    {formatCurrency(loan.additionalInterest)}
-                  </span>
-                </div>
-              )}
               {(loan.additionalMgmtFee ?? 0) > 0 && (
                 <div className="flex justify-between">
                   <span className="text-purple-500 dark:text-purple-400">Additional Mgmt Fee</span>
