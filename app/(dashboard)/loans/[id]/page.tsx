@@ -402,7 +402,6 @@ function openLoanReport(
       <strong>First Payment:</strong> ${fmtD(loan.firstPaymentDate)}<br/>
       <strong>Maturity Date:</strong> ${fmtD(loan.agreedMaturityDate)}<br/>
       <strong>Installments:</strong> ${loan.installmentsPaid} of ${loan.totalInstallments} paid<br/>
-      <strong>Created:</strong> ${fmtD(loan.createdAt)} &nbsp;·&nbsp; <strong>Approved:</strong> ${fmtD(loan.approvedAt)}<br/>
       ${loan.isRestructured ? `<strong>Restructured:</strong> Yes<br/>` : ""}</p></div>
   </div>
 
