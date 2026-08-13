@@ -3005,14 +3005,202 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle>Payment History — {payments.length} record{payments.length !== 1 ? "s" : ""}</CardTitle>
-                {canPayment && canRecordPayment && (
-                  <button
-                    onClick={() => setShowPayModal(true)}
-                    className="text-xs font-semibold text-green-600 dark:text-green-400 hover:underline flex items-center gap-1"
-                  >
-                    <Banknote className="w-3 h-3" /> Record Payment
-                  </button>
-                )}
+                <div className="flex items-center gap-2">
+                  {payments.length > 0 && (
+                    <>
+                      {/* Download PDF */}
+                      <button
+                        onClick={() => {
+                          const fmtRWF = (n: number) => "RWF " + n.toLocaleString();
+                          const today  = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+                          const rows = payments.map((p, i) => {
+                            const m = METHOD_CONFIG[p.method] ?? { label: p.method };
+                            return `<tr style="background:${i % 2 === 0 ? "#fff" : "#f9fafb"}">
+                              <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;font-family:monospace">${p.reference}</td>
+                              <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb">${new Date(p.date).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"})}</td>
+                              <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;font-weight:700">${fmtRWF(p.amount)}</td>
+                              <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;color:#16a34a">${fmtRWF(p.principal)}</td>
+                              <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;color:#7e22ce">${(p.managementFee ?? 0) > 0 ? fmtRWF(p.managementFee) : "—"}</td>
+                              <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;color:#7e22ce">${(p.additionalMgmtFee ?? 0) > 0 ? fmtRWF(p.additionalMgmtFee ?? 0) : "—"}</td>
+                              <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;color:#b45309">${fmtRWF(p.interest)}</td>
+                              <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;color:#dc2626">${p.penalty > 0 ? fmtRWF(p.penalty) : "—"}</td>
+                              <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;color:#ea580c">${(p.additionalInterest ?? 0) > 0 ? fmtRWF(p.additionalInterest ?? 0) : "—"}</td>
+                              <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;text-transform:capitalize">${m.label}</td>
+                              <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;color:#555">${p.recordedByName ?? "—"}</td>
+                            </tr>`;
+                          }).join("");
+                          const totals = {
+                            amount:      payments.reduce((s, p) => s + p.amount, 0),
+                            principal:   payments.reduce((s, p) => s + p.principal, 0),
+                            mgmtFee:     payments.reduce((s, p) => s + (p.managementFee ?? 0), 0),
+                            addMgmtFee:  payments.reduce((s, p) => s + (p.additionalMgmtFee ?? 0), 0),
+                            interest:    payments.reduce((s, p) => s + p.interest, 0),
+                            penalty:     payments.reduce((s, p) => s + p.penalty, 0),
+                            addInterest: payments.reduce((s, p) => s + (p.additionalInterest ?? 0), 0),
+                          };
+                          const docId = `PAY-${loan.id.toUpperCase()}`;
+                          const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>${docId}</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#1a1a1a;background:#fff}
+  .page{max-width:1000px;margin:0 auto;padding:36px}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px;padding-bottom:20px;border-bottom:3px solid #166534}
+  .co-name{font-size:20px;font-weight:700;color:#166534}.co-sub{font-size:11px;color:#888;margin-top:2px}
+  .title h1{font-size:22px;font-weight:800;color:#166534;text-align:right}.title p{font-size:10px;color:#666;text-align:right;line-height:1.6}
+  .meta{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:22px}
+  .box{background:#f8fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px}
+  .box h3{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#9ca3af;margin-bottom:6px}
+  .box p{font-size:11px;line-height:1.7;color:#374151}.box strong{color:#111}
+  table{width:100%;border-collapse:collapse;margin-top:4px}
+  thead th{background:#052e16;color:#fff;text-align:left;padding:8px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px}
+  tfoot td{background:#f0fdf4;font-weight:700;padding:8px 10px;border-top:2px solid #16a34a;font-size:11px;color:#166534}
+  .toolbar{position:fixed;top:14px;right:14px;display:flex;gap:8px}
+  .btn-dl{background:#166534;color:#fff;border:none;padding:7px 16px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer}
+  .btn-pr{background:#fff;color:#166534;border:2px solid #166534;padding:7px 16px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer}
+  @media print{.toolbar{display:none}.page{padding:20px}}
+</style></head>
+<body>
+<div class="toolbar">
+  <button class="btn-pr" onclick="window.print()">🖨 Print</button>
+  <button class="btn-dl" id="dlBtn" onclick="downloadPDF()">⬇ Download PDF</button>
+</div>
+<div class="page" id="content">
+  <div class="header">
+    <div><div class="co-name">${companyName}</div><div class="co-sub">NDFSP</div></div>
+    <div class="title"><h1>PAYMENT HISTORY</h1><p>Ref: <strong>${docId}</strong><br/>Generated: ${today}</p></div>
+  </div>
+  <div class="meta">
+    <div class="box"><h3>Loan Details</h3>
+      <p><strong>Loan ID:</strong> ${loan.id.toUpperCase()}<br/>
+      <strong>Amount:</strong> ${fmtRWF(loan.disbursedAmount || loan.amount)}<br/>
+      <strong>Purpose:</strong> ${loan.purpose}</p></div>
+    <div class="box"><h3>Customer</h3>
+      <p><strong>Name:</strong> ${loan.customer?.names ?? "—"}<br/>
+      <strong>ID:</strong> ${loan.customer?.nationalId ?? "—"}<br/>
+      <strong>Phone:</strong> ${loan.customer?.phone ?? "—"}</p></div>
+  </div>
+  <table>
+    <thead><tr>
+      <th>Reference</th><th>Date</th><th>Total</th><th>Principal</th><th>Mgmt Fee</th><th>Add. Mgmt Fee</th>
+      <th>Interest</th><th>Penalty</th><th>Add. Interest</th><th>Method</th><th>Recorded By</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+    <tfoot><tr>
+      <td colspan="2">TOTALS</td>
+      <td>${fmtRWF(totals.amount)}</td>
+      <td>${fmtRWF(totals.principal)}</td>
+      <td>${fmtRWF(totals.mgmtFee)}</td>
+      <td>${fmtRWF(totals.addMgmtFee)}</td>
+      <td>${fmtRWF(totals.interest)}</td>
+      <td>${fmtRWF(totals.penalty)}</td>
+      <td>${fmtRWF(totals.addInterest)}</td>
+      <td colspan="2"></td>
+    </tr></tfoot>
+  </table>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script>
+  function downloadPDF(){
+    var btn=document.getElementById('dlBtn');
+    btn.disabled=true;btn.textContent='Generating…';
+    html2pdf().set({
+      margin:[8,8,8,8],filename:'${docId}.pdf',
+      image:{type:'jpeg',quality:0.98},
+      html2canvas:{scale:2,useCORS:true,logging:false},
+      jsPDF:{unit:'mm',format:'a4',orientation:'landscape'}
+    }).from(document.getElementById('content')).save().then(function(){
+      btn.disabled=false;btn.textContent='⬇ Download PDF';
+    });
+  }
+</script>
+</body></html>`;
+                          const w = window.open("", "_blank", "width=1000,height=750");
+                          if (!w) return;
+                          w.document.write(html);
+                          w.document.close();
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-green-600 text-xs font-medium text-green-700 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+                      >
+                        <ArrowDownToLine className="w-3.5 h-3.5" /> Download PDF
+                      </button>
+
+                      {/* Print */}
+                      <button
+                        onClick={() => {
+                          const w = window.open("", "_blank", "width=900,height=700");
+                          if (!w) return;
+                          const fmtRWF = (n: number) => "RWF " + n.toLocaleString();
+                          const rows = payments.map((p, i) => {
+                            const m = METHOD_CONFIG[p.method] ?? { label: p.method };
+                            return `<tr style="background:${i % 2 === 0 ? "#ffffff" : "#f9fafb"}">
+                              <td style="font-family:monospace">${p.reference}</td>
+                              <td>${new Date(p.date).toLocaleDateString()}</td>
+                              <td style="font-weight:700">${fmtRWF(p.amount)}</td>
+                              <td style="color:#16a34a">${fmtRWF(p.principal)}</td>
+                              <td style="color:#7e22ce">${(p.managementFee ?? 0) > 0 ? fmtRWF(p.managementFee) : "—"}</td>
+                              <td style="color:#7e22ce">${(p.additionalMgmtFee ?? 0) > 0 ? fmtRWF(p.additionalMgmtFee ?? 0) : "—"}</td>
+                              <td style="color:#b45309">${fmtRWF(p.interest)}</td>
+                              <td style="color:#dc2626">${p.penalty > 0 ? fmtRWF(p.penalty) : "—"}</td>
+                              <td style="color:#ea580c">${(p.additionalInterest ?? 0) > 0 ? fmtRWF(p.additionalInterest ?? 0) : "—"}</td>
+                              <td style="text-transform:capitalize">${m.label}</td>
+                              <td>${p.recordedByName ?? "—"}</td>
+                            </tr>`;
+                          }).join("");
+                          const totPrincipal   = payments.reduce((s, p) => s + p.principal, 0);
+                          const totAmount      = payments.reduce((s, p) => s + p.amount, 0);
+                          const totMgmt        = payments.reduce((s, p) => s + (p.managementFee ?? 0), 0);
+                          const totAddMgmt     = payments.reduce((s, p) => s + (p.additionalMgmtFee ?? 0), 0);
+                          const totInterest    = payments.reduce((s, p) => s + p.interest, 0);
+                          const totPenalty     = payments.reduce((s, p) => s + p.penalty, 0);
+                          const totAddInterest = payments.reduce((s, p) => s + (p.additionalInterest ?? 0), 0);
+                          w.document.write(`<!DOCTYPE html><html><head><title>Payment History</title>
+                            <style>body{font-family:Arial,sans-serif;font-size:12px;color:#111;margin:24px}
+                            table{width:100%;border-collapse:collapse}
+                            td,th{padding:7px 10px;border-bottom:1px solid #e5e7eb}
+                            th{background:#052e16;color:#fff;text-align:left;font-size:11px}
+                            tfoot td{background:#f0fdf4;font-weight:700;border-top:2px solid #16a34a}
+                            h2{margin:0 0 4px}p{margin:0 0 12px;color:#555;font-size:11px}
+                            @media print{button{display:none}}</style></head>
+                            <body>
+                              <h2>Payment History — ${loan.id.toUpperCase()}</h2>
+                              <p>Customer: ${loan.customer?.names ?? ""} &nbsp;·&nbsp; ${payments.length} payment${payments.length !== 1 ? "s" : ""}</p>
+                              <table>
+                                <thead><tr>
+                                  <th>Reference</th><th>Date</th><th>Total</th><th>Principal</th><th>Mgmt Fee</th><th>Add. Mgmt Fee</th>
+                                  <th>Interest</th><th>Penalty</th><th>Add. Interest</th><th>Method</th><th>Recorded By</th>
+                                </tr></thead>
+                                <tbody>${rows}</tbody>
+                                <tfoot><tr>
+                                  <td colspan="2">TOTALS</td>
+                                  <td>${fmtRWF(totAmount)}</td>
+                                  <td>${fmtRWF(totPrincipal)}</td>
+                                  <td>${fmtRWF(totMgmt)}</td>
+                                  <td>${fmtRWF(totAddMgmt)}</td>
+                                  <td>${fmtRWF(totInterest)}</td>
+                                  <td>${fmtRWF(totPenalty)}</td>
+                                  <td>${fmtRWF(totAddInterest)}</td>
+                                  <td colspan="2"></td>
+                                </tr></tfoot>
+                              </table>
+                              <script>window.onload=()=>window.print();<\/script>
+                            </body></html>`);
+                          w.document.close();
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-xs font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                      >
+                        <Printer className="w-3.5 h-3.5" /> Print
+                      </button>
+                    </>
+                  )}
+                  {canPayment && canRecordPayment && (
+                    <button
+                      onClick={() => setShowPayModal(true)}
+                      className="text-xs font-semibold text-green-600 dark:text-green-400 hover:underline flex items-center gap-1"
+                    >
+                      <Banknote className="w-3 h-3" /> Record Payment
+                    </button>
+                  )}
+                </div>
               </div>
             </CardHeader>
             {payments.length === 0 ? (
@@ -3024,7 +3212,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50">
-                      {["Reference", "Date", "Total", "Principal", "Mgmt Fee", "Interest", "Penalty", "Add. Interest", "Method", "Recorded By", "Receipt"].map((h) => (
+                      {["Reference", "Date", "Total", "Principal", "Mgmt Fee", "Add. Mgmt Fee", "Interest", "Penalty", "Add. Interest", "Method", "Recorded By", "Receipt"].map((h) => (
                         <th key={h} className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 px-4 py-3 first:pl-6">{h}</th>
                       ))}
                     </tr>
@@ -3049,6 +3237,11 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                           <td className="px-4 py-3">
                             {(p.managementFee ?? 0) > 0
                               ? <span className="font-semibold text-purple-600 dark:text-purple-400">{formatCurrency(p.managementFee)}</span>
+                              : <span className="text-gray-300 dark:text-gray-600">—</span>}
+                          </td>
+                          <td className="px-4 py-3">
+                            {(p.additionalMgmtFee ?? 0) > 0
+                              ? <span className="font-semibold text-purple-600 dark:text-purple-400">{formatCurrency(p.additionalMgmtFee ?? 0)}</span>
                               : <span className="text-gray-300 dark:text-gray-600">—</span>}
                           </td>
                           <td className="px-4 py-3 font-semibold text-amber-600 dark:text-amber-400">{formatCurrency(p.interest)}</td>
@@ -3101,6 +3294,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
                       <td className="px-4 py-3 text-gray-900 dark:text-gray-100">{formatCurrency(payments.reduce((s,p)=>s+p.amount,0))}</td>
                       <td className="px-4 py-3 text-green-600 dark:text-green-400">{formatCurrency(payments.reduce((s,p)=>s+p.principal,0))}</td>
                       <td className="px-4 py-3 text-purple-600 dark:text-purple-400">{formatCurrency(payments.reduce((s,p)=>s+(p.managementFee??0),0))}</td>
+                      <td className="px-4 py-3 text-purple-600 dark:text-purple-400">{formatCurrency(payments.reduce((s,p)=>s+(p.additionalMgmtFee??0),0))}</td>
                       <td className="px-4 py-3 text-amber-600 dark:text-amber-400">{formatCurrency(payments.reduce((s,p)=>s+p.interest,0))}</td>
                       <td className="px-4 py-3 text-red-600 dark:text-red-400">{formatCurrency(payments.reduce((s,p)=>s+p.penalty,0))}</td>
                       <td className="px-4 py-3 text-orange-600 dark:text-orange-400">{formatCurrency(payments.reduce((s,p)=>s+(p.additionalInterest??0),0))}</td>

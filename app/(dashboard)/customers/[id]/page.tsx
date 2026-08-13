@@ -284,23 +284,41 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-gray-100 dark:border-gray-800">
-                    {["Date", "Amount", "Principal", "Interest", "Penalty", "Method"].map((h) => (
+                    {["Date", "Total", "Principal", "Mgmt Fee", "Add. Mgmt Fee", "Interest", "Penalty", "Add. Interest", "Method", "Recorded By", "Receipt"].map((h) => (
                       <th key={h} className="text-left text-xs font-medium text-gray-500 px-6 py-2">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                   {payments.length === 0 ? (
-                    <tr><td colSpan={6} className="text-center py-6 text-sm text-gray-400">No payments recorded</td></tr>
+                    <tr><td colSpan={11} className="text-center py-6 text-sm text-gray-400">No payments recorded</td></tr>
                   ) : payments.map((p: any) => (
                     <tr key={p.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
                       <td className="px-6 py-2 text-xs text-gray-700 dark:text-gray-300">{formatDate(p.date)}</td>
                       <td className="px-6 py-2 text-xs font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(p.amount)}</td>
                       <td className="px-6 py-2 text-xs text-gray-600 dark:text-gray-400">{formatCurrency(p.principal)}</td>
+                      <td className="px-6 py-2 text-xs text-purple-600 dark:text-purple-400">{(p.managementFee ?? 0) > 0 ? formatCurrency(p.managementFee) : "—"}</td>
+                      <td className="px-6 py-2 text-xs text-purple-600 dark:text-purple-400">{(p.additionalMgmtFee ?? 0) > 0 ? formatCurrency(p.additionalMgmtFee) : "—"}</td>
                       <td className="px-6 py-2 text-xs text-gray-600 dark:text-gray-400">{formatCurrency(p.interest)}</td>
                       <td className="px-6 py-2 text-xs text-red-600 dark:text-red-400">{p.penalty > 0 ? formatCurrency(p.penalty) : "—"}</td>
+                      <td className="px-6 py-2 text-xs text-orange-600 dark:text-orange-400">{(p.additionalInterest ?? 0) > 0 ? formatCurrency(p.additionalInterest) : "—"}</td>
                       <td className="px-6 py-2 text-xs">
                         <Badge variant="neutral">{p.method.replace("_", " ")}</Badge>
+                      </td>
+                      <td className="px-6 py-2 text-xs text-gray-400">{p.recordedByName ?? "—"}</td>
+                      <td className="px-6 py-2 text-xs">
+                        {p.receiptUrl ? (
+                          <a
+                            href={p.receiptUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-green-600 dark:text-green-400 hover:underline font-medium"
+                          >
+                            View
+                          </a>
+                        ) : (
+                          <span className="text-gray-300 dark:text-gray-600">—</span>
+                        )}
                       </td>
                     </tr>
                   ))}

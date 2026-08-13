@@ -40,6 +40,14 @@ function getDateRange(filter: string): { gte: Date; lte: Date } | null {
   }
 }
 
+function getCustomRange(from: string | null, to: string | null): { gte: Date; lte: Date } | null {
+  if (!from || !to) return null;
+  const gte = new Date(`${from}T00:00:00`);
+  const lte = new Date(`${to}T23:59:59.999`);
+  if (isNaN(gte.getTime()) || isNaN(lte.getTime())) return null;
+  return { gte, lte };
+}
+
 export async function GET(request: Request) {
   try {
     const auth = getAuthUser(request);
@@ -60,7 +68,9 @@ export async function GET(request: Request) {
     const cid = auth.companyId;
     const url = new URL(request.url);
     const filter = url.searchParams.get("filter") ?? "all";
-    const range = getDateRange(filter);
+    const range = filter === "custom"
+      ? getCustomRange(url.searchParams.get("from"), url.searchParams.get("to"))
+      : getDateRange(filter);
 
     const loanWhere = { companyId: cid, ...(range ? { createdAt: range } : {}) };
     const payWhere = { companyId: cid, ...(range ? { date: range } : {}) };

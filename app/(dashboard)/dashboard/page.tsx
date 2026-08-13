@@ -88,6 +88,7 @@ const FILTERS = [
   { value: "last_quarter", label: "Last Quarter" },
   { value: "this_year", label: "This Year" },
   { value: "last_year", label: "Last Year" },
+  { value: "custom", label: "Custom Range" },
 ] as const;
 
 const PERIOD_LABEL: Record<string, string> = {
@@ -112,6 +113,8 @@ export default function DashboardPage() {
   const [overdueList, setOverdueList] = useState<OverdueLoan[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo,   setCustomTo]   = useState("");
 
   const [storedUser, setStoredUser] = useState<ReturnType<typeof getStoredUser>>(null);
   useEffect(() => { setStoredUser(getStoredUser()); }, []);
@@ -119,14 +122,17 @@ export default function DashboardPage() {
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   const companyName = storedUser?.companyName ?? "";
-  const period = PERIOD_LABEL[filter] ?? "all time";
+  const period = filter === "custom"
+    ? (customFrom && customTo ? `${formatDate(customFrom)} – ${formatDate(customTo)}` : "custom range")
+    : (PERIOD_LABEL[filter] ?? "all time");
 
-  const fetchData = useCallback((activeFilter: string) => {
+  const fetchData = useCallback((activeFilter: string, from?: string, to?: string) => {
     const storedRole = getStoredUser()?.role;
     if (storedRole === "super_admin") { setLoading(false); return; }
     setLoading(true);
+    const rangeQuery = activeFilter === "custom" && from && to ? `&from=${from}&to=${to}` : "";
     Promise.all([
-      apiFetch(`/api/v1/dashboard?filter=${activeFilter}`).then((r) => r.json()),
+      apiFetch(`/api/v1/dashboard?filter=${activeFilter}${rangeQuery}`).then((r) => r.json()),
       apiFetch("/api/v1/loans?status=pending&limit=5").then((r) => r.json()),
       apiFetch("/api/v1/loans?status=overdue&limit=50").then((r) => r.json()),
     ]).then(([dashData, loansData, overdueData]) => {
@@ -136,7 +142,13 @@ export default function DashboardPage() {
     }).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => { fetchData(filter); }, [filter, fetchData]);
+  useEffect(() => {
+    if (filter === "custom") {
+      if (customFrom && customTo) fetchData(filter, customFrom, customTo);
+    } else {
+      fetchData(filter);
+    }
+  }, [filter, customFrom, customTo, fetchData]);
 
   if (loading) {
     return (
@@ -229,6 +241,26 @@ export default function DashboardPage() {
                     </option>
                   ))}
                 </select>
+              </div>
+            )}
+
+            {role === "managing_director" && filter === "custom" && (
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="date"
+                  value={customFrom}
+                  onChange={(e) => setCustomFrom(e.target.value)}
+                  max={customTo || undefined}
+                  className="[color-scheme:dark] bg-white/15 backdrop-blur-sm border border-white/20 text-white text-xs font-medium rounded-xl px-2.5 py-2 cursor-pointer hover:bg-white/20 transition-colors focus:outline-none focus:ring-2 focus:ring-white/30"
+                />
+                <span className="text-green-300/70 text-xs">to</span>
+                <input
+                  type="date"
+                  value={customTo}
+                  onChange={(e) => setCustomTo(e.target.value)}
+                  min={customFrom || undefined}
+                  className="[color-scheme:dark] bg-white/15 backdrop-blur-sm border border-white/20 text-white text-xs font-medium rounded-xl px-2.5 py-2 cursor-pointer hover:bg-white/20 transition-colors focus:outline-none focus:ring-2 focus:ring-white/30"
+                />
               </div>
             )}
 

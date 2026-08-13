@@ -19,12 +19,24 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
         payments: {
           orderBy: { date: "desc" },
           take: 20,
+          include: {
+            recordedBy: { select: { name: true } },
+          },
         },
       },
     });
 
     if (!customer) return notFound("Customer not found.");
-    return ok(customer);
+
+    const data = {
+      ...customer,
+      payments: customer.payments.map((p) => ({
+        ...p,
+        recordedByName: p.recordedBy.name,
+      })),
+    };
+
+    return ok(data);
   } catch (e) {
     console.error(e);
     return serverError();

@@ -149,7 +149,7 @@ export default function LoanCalculatorPage() {
       </style></head>
       <body>
         <h2>Loan Amortisation Schedule</h2>
-        <p>Principal: RWF ${principalNum.toLocaleString()} &nbsp;·&nbsp; Rate: ${monthlyRate}% / month (${annualRate}% p.a.) &nbsp;·&nbsp; Method: ${method === "flat" ? "Flat Rate" : "Declining Balance"} &nbsp;·&nbsp; ${installmentsNum} ${freq.label} installments</p>
+        <p>Principal: RWF ${principalNum.toLocaleString()} &nbsp;·&nbsp; Rate: ${monthlyRate}% / month  &nbsp;·&nbsp; Method: ${method === "flat" ? "Flat Rate" : "Declining Balance"} &nbsp;·&nbsp; ${installmentsNum} ${freq.label} installments</p>
         <div class="summary">
           <div class="kpi"><p>Principal</p><strong>RWF ${principalNum.toLocaleString()}</strong></div>
           <div class="kpi"><p>EMI / Installment</p><strong>RWF ${emi.toLocaleString()}</strong></div>
