@@ -125,12 +125,6 @@ export function Navbar({ onMenuClick }: { onMenuClick?: () => void }) {
 
       {/* Right side */}
       <div className="flex items-center gap-1">
-        {/* Role badge */}
-        <div className="hidden md:flex items-center gap-1.5 px-3 py-1 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-100 dark:border-green-800/50 mr-1">
-          <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-          <span className="text-xs font-medium text-green-700 dark:text-green-400">{ROLE_LABELS[role]}</span>
-        </div>
-
         <ThemeToggle />
 
         {/* Notifications bell (not for super_admin) */}

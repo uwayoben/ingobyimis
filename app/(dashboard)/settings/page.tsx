@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
-import { Save, User, Bell, Shield, Building2, Moon, CheckCircle2, AlertCircle } from "lucide-react";
+import { Save, User, Bell, Shield, Building2, Moon, CheckCircle2, AlertCircle, Zap, Hand, AlertTriangle, Loader2 } from "lucide-react";
 import { motion } from "framer-motion";
 import { useTheme } from "@/components/ThemeProvider";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { apiFetch } from "@/lib/api-fetch";
 import { cn } from "@/lib/utils";
+import { useRole } from "@/components/RoleContext";
 
 const SETTING_TABS = [
   { id: "profile",      label: "Profile",      icon: User      },
@@ -39,11 +40,18 @@ function Alert({ type, message }: { type: "success" | "error"; message: string }
 // ── Profile Tab ───────────────────────────────────────────────────────────────
 
 function ProfileTab() {
-  const stored = getStoredUser();
-  const [name,    setName]    = useState(stored?.name  ?? "");
-  const [phone,   setPhone]   = useState(stored?.phone ?? "");
+  const [stored,  setStored]  = useState<ReturnType<typeof getStoredUser>>(null);
+  const [name,    setName]    = useState("");
+  const [phone,   setPhone]   = useState("");
   const [loading, setLoading] = useState(false);
   const [msg,     setMsg]     = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  useEffect(() => {
+    const s = getStoredUser();
+    setStored(s);
+    setName(s?.name ?? "");
+    setPhone(s?.phone ?? "");
+  }, []);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -195,11 +203,187 @@ function SecurityTab() {
   );
 }
 
+// ── Company Tab ───────────────────────────────────────────────────────────────
+
+type AdditionalInterestMode = "manual" | "auto";
+
+function AdditionalInterestModeCard({ role }: { role: string }) {
+  const isSuperAdmin = role === "super_admin";
+  const [companies, setCompanies]     = useState<{ id: string; name: string }[]>([]);
+  const [companyId, setCompanyId]     = useState("");
+  const [mode, setMode]               = useState<AdditionalInterestMode | null>(null);
+  const [loading, setLoading]         = useState(true);
+  const [saving, setSaving]           = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [msg, setMsg]                 = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  // Resolve which company we're editing
+  useEffect(() => {
+    if (isSuperAdmin) {
+      apiFetch("/api/v1/companies")
+        .then((r) => r.json())
+        .then((json) => {
+          const list = (json.data ?? []) as { id: string; name: string }[];
+          setCompanies(list);
+          setCompanyId((prev) => prev || list[0]?.id || "");
+        })
+        .catch(() => {});
+    } else {
+      const stored = getStoredUser();
+      setCompanyId(stored?.companyId ?? "");
+    }
+  }, [isSuperAdmin]);
+
+  // Load the selected company's current setting
+  useEffect(() => {
+    if (!companyId) return;
+    setLoading(true);
+    setMsg(null);
+    const qs = isSuperAdmin ? `?companyId=${companyId}` : "";
+    apiFetch(`/api/v1/company/settings${qs}`)
+      .then((r) => r.json())
+      .then((json) => setMode(json.data?.additionalInterestMode ?? "manual"))
+      .catch(() => setMsg({ type: "error", text: "Failed to load company settings." }))
+      .finally(() => setLoading(false));
+  }, [companyId, isSuperAdmin]);
+
+  const applyModeChange = async (next: AdditionalInterestMode) => {
+    setSaving(true);
+    setMsg(null);
+    try {
+      const res = await apiFetch("/api/v1/company/settings", {
+        method:  "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ additionalInterestMode: next, ...(isSuperAdmin ? { companyId } : {}) }),
+      });
+      const json = await res.json();
+      if (!res.ok) { setMsg({ type: "error", text: json.error ?? "Failed to update." }); return; }
+      setMode(next);
+      setMsg({ type: "success", text: `Additional interest is now applied ${next === "auto" ? "automatically" : "manually"}.` });
+    } catch {
+      setMsg({ type: "error", text: "Network error. Please try again." });
+    } finally {
+      setSaving(false);
+      setConfirmOpen(false);
+    }
+  };
+
+  const requestModeChange = (next: AdditionalInterestMode) => {
+    if (next === mode) return;
+    if (next === "auto") { setConfirmOpen(true); return; }
+    applyModeChange(next);
+  };
+
+  return (
+    <Card>
+      <CardHeader><CardTitle>Additional Interest on Overdue Loans</CardTitle></CardHeader>
+      <CardContent className="space-y-5">
+        <p className="text-sm text-gray-500 dark:text-gray-400">
+          Controls how additional interest accrues once a loan falls behind on payments. This does not
+          change the loan&apos;s regular interest rate — it only decides who applies the extra monthly
+          charge while a loan is overdue.
+        </p>
+
+        {isSuperAdmin && (
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-gray-500 dark:text-gray-400">Company</label>
+            <select
+              value={companyId}
+              onChange={(e) => setCompanyId(e.target.value)}
+              className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-green-500"
+            >
+              {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+        )}
+
+        {msg && <Alert type={msg.type} message={msg.text} />}
+
+        {loading ? (
+          <div className="flex items-center gap-2 text-sm text-gray-400 py-4">
+            <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3">
+            {([
+              { value: "manual" as const, label: "Manual",   icon: Hand, desc: "Staff add additional interest themselves via “Add Charge” on a loan. Nothing is applied automatically." },
+              { value: "auto"   as const, label: "Auto",     icon: Zap,  desc: "The system charges additional interest automatically for every full 30-day cycle a loan stays overdue, using that loan’s own rate." },
+            ]).map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                disabled={saving}
+                onClick={() => requestModeChange(opt.value)}
+                className={cn(
+                  "text-left rounded-xl border-2 p-4 transition-all disabled:opacity-60",
+                  mode === opt.value
+                    ? "border-green-500 bg-green-50 dark:bg-green-900/20 ring-1 ring-green-500/30"
+                    : "border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600"
+                )}
+              >
+                <div className="flex items-center gap-2 mb-1.5">
+                  <opt.icon className={cn("w-4 h-4", mode === opt.value ? "text-green-600 dark:text-green-400" : "text-gray-400")} />
+                  <span className={cn("text-sm font-semibold", mode === opt.value ? "text-green-700 dark:text-green-400" : "text-gray-700 dark:text-gray-300")}>
+                    {opt.label}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">{opt.desc}</p>
+              </button>
+            ))}
+          </div>
+        )}
+      </CardContent>
+
+      {confirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-900 rounded-xl shadow-xl p-6 max-w-sm w-full mx-4">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-gray-900 dark:text-gray-100">Enable Auto Additional Interest?</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400">This changes how customers are charged.</p>
+              </div>
+            </div>
+            <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+              From now on, every loan that crosses a new 30-day overdue threshold will automatically be
+              charged additional interest at its own rate, with no staff action required. Staff can still
+              add manual charges on top at any time. You can switch back to manual at any point.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => setConfirmOpen(false)}
+                disabled={saving}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => applyModeChange("auto")}
+                disabled={saving}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-60 transition-colors flex items-center gap-1.5"
+              >
+                {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                Enable Auto Mode
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
   const [tab, setTab] = useState("profile");
   const { theme, setTheme } = useTheme();
+  const { role } = useRole();
+  const canManageCompany = ["managing_director", "super_admin"].includes(role);
 
   return (
     <div className="space-y-6">
@@ -299,14 +483,18 @@ export default function SettingsPage() {
 
           {tab === "company" && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-              <Card>
-                <CardHeader><CardTitle>Company Settings</CardTitle></CardHeader>
-                <CardContent>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">
-                    Company details are managed by the Super Admin. Contact support to update company information.
-                  </p>
-                </CardContent>
-              </Card>
+              {canManageCompany ? (
+                <AdditionalInterestModeCard role={role} />
+              ) : (
+                <Card>
+                  <CardHeader><CardTitle>Company Settings</CardTitle></CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      Company details are managed by your managing director or the Super Admin. Contact them to update company information.
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
             </motion.div>
           )}
         </div>

@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getAuthUser } from "@/lib/auth";
-import { ok, notFound, unauthorized, forbidden, serverError } from "@/lib/api-response";
+import { ok, notFound, unauthorized, forbidden, serverError, badRequest } from "@/lib/api-response";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -47,12 +47,16 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   try {
     const auth = getAuthUser(request);
     if (!auth) return unauthorized();
+    if (!["super_admin", "managing_director", "loan_officer"].includes(auth.role)) return forbidden();
 
     const { id } = await params;
     const body = await request.json();
 
     const customer = await prisma.customer.findFirst({
-      where: { id, companyId: auth.companyId! },
+      where: {
+        id,
+        ...(auth.role !== "super_admin" ? { companyId: auth.companyId! } : {}),
+      },
     });
     if (!customer) return notFound("Customer not found.");
 
@@ -60,6 +64,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       where: { id },
       data: {
         names: body.names,
+        nationalId: body.nationalId,
+        dateOfBirth: body.dateOfBirth ? new Date(body.dateOfBirth) : undefined,
         phone: body.phone,
         email: body.email || null,
         gender: body.gender,
@@ -81,7 +87,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     });
 
     return ok(updated);
-  } catch (e) {
+  } catch (e: any) {
+    if (e?.code === "P2002") return badRequest("A customer with this National ID already exists.");
     console.error(e);
     return serverError();
   }

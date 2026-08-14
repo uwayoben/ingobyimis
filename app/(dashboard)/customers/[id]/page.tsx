@@ -1,14 +1,16 @@
 "use client";
 import { use, useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Phone, Mail, MapPin, Briefcase, CreditCard, TrendingUp, User, Heart, Building2, Loader2, Calculator, ChevronDown, ChevronUp, Trash2 } from "lucide-react";
+import { ArrowLeft, Phone, Mail, MapPin, Briefcase, CreditCard, TrendingUp, User, Heart, Building2, Loader2, Calculator, ChevronDown, ChevronUp, Trash2, Pencil } from "lucide-react";
 import Link from "next/link";
 import { formatDate, STATUS_COLORS, STATUS_LABELS } from "@/lib/utils";
 import { apiFetch } from "@/lib/api-fetch";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
 import { RoleGate } from "@/components/RoleContext";
+import { CustomerForm } from "@/components/customers/CustomerForm";
 import { generateSchedule, FREQUENCY_DAYS } from "@/lib/loan-schedule";
 
 function formatCurrency(n: number) {
@@ -23,6 +25,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
 
   // Loan calculator state
   const [calcOpen, setCalcOpen] = useState(false);
@@ -73,12 +76,16 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
     }
   }
 
-  useEffect(() => {
+  const fetchCustomer = () =>
     apiFetch(`/api/v1/customers/${id}`)
       .then((r) => r.json())
       .then((json) => setCustomer(json.data))
       .catch(() => {})
       .finally(() => setLoading(false));
+
+  useEffect(() => {
+    fetchCustomer();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   if (loading) {
@@ -117,6 +124,16 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
         </div>
         <Badge variant={customer.isActive ? "success" : "neutral"}>{customer.isActive ? "Active" : "Inactive"}</Badge>
         <Button size="sm" onClick={() => router.push(`/loans/new?customerId=${customer.id}`)}>Create Loan</Button>
+        <RoleGate roles={["super_admin", "managing_director", "loan_officer"]}>
+          <button
+            type="button"
+            onClick={() => setShowEditModal(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+          >
+            <Pencil className="w-3.5 h-3.5" />
+            Edit
+          </button>
+        </RoleGate>
         <RoleGate roles={["super_admin", "managing_director"]}>
           <button
             type="button"
@@ -457,6 +474,14 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
           </Card>
         </div>
       </div>
+
+      <Modal isOpen={showEditModal} onClose={() => setShowEditModal(false)} title="Edit Customer" size="lg">
+        <CustomerForm
+          customer={customer}
+          onClose={() => setShowEditModal(false)}
+          onUpdated={() => { setShowEditModal(false); fetchCustomer(); }}
+        />
+      </Modal>
 
       {confirmDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">

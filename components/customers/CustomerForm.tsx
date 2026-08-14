@@ -6,6 +6,8 @@ import { User, MapPin, Phone, Briefcase, Heart, Building2 } from "lucide-react";
 interface Props {
   onClose: () => void;
   onCreated?: () => void;
+  onUpdated?: () => void;
+  customer?: any;
 }
 
 const PROVINCES = ["Kigali", "Eastern", "Western", "Northern", "Southern"];
@@ -39,19 +41,32 @@ function Field({ label, required, children }: { label: string; required?: boolea
 
 const inputCls = "w-full px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all";
 
-export function CustomerForm({ onClose, onCreated }: Props) {
+export function CustomerForm({ onClose, onCreated, onUpdated, customer }: Props) {
+  const isEdit = !!customer;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const [form, setForm] = useState({
-    names: "", nationalId: "", dateOfBirth: "", gender: "",
-    province: "", district: "", sector: "", cell: "", village: "",
-    phone: "", email: "",
-    maritalStatus: "", maritalPropertyRegime: "",
-    spouseName: "", spousePhone: "", spouseIdNumber: "",
-    employmentStatus: "", employerName: "",
-    relationshipWithNdfsp: "",
-  });
+  const [form, setForm] = useState(() => ({
+    names: customer?.names ?? "",
+    nationalId: customer?.nationalId ?? "",
+    dateOfBirth: customer?.dateOfBirth ? String(customer.dateOfBirth).slice(0, 10) : "",
+    gender: customer?.gender ?? "",
+    province: customer?.province ?? "",
+    district: customer?.district ?? "",
+    sector: customer?.sector ?? "",
+    cell: customer?.cell ?? "",
+    village: customer?.village ?? "",
+    phone: customer?.phone ?? "",
+    email: customer?.email ?? "",
+    maritalStatus: customer?.maritalStatus ?? "",
+    maritalPropertyRegime: customer?.maritalPropertyRegime ?? "",
+    spouseName: customer?.spouseName ?? "",
+    spousePhone: customer?.spousePhone ?? "",
+    spouseIdNumber: customer?.spouseIdNumber ?? "",
+    employmentStatus: customer?.employmentStatus ?? "",
+    employerName: customer?.employerName ?? "",
+    relationshipWithNdfsp: customer?.relationshipWithNdfsp ?? "",
+  }));
 
   const set = (field: string) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
@@ -71,14 +86,15 @@ export function CustomerForm({ onClose, onCreated }: Props) {
         payload.spouseIdNumber = "";
         payload.maritalPropertyRegime = "";
       }
-      const res = await fetch("/api/v1/customers", {
-        method: "POST",
+      const res = await fetch(isEdit ? `/api/v1/customers/${customer.id}` : "/api/v1/customers", {
+        method: isEdit ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       const json = await res.json();
       if (!res.ok) { setError(json.error || "Failed to save customer."); return; }
-      onCreated?.();
+      if (isEdit) onUpdated?.();
+      else onCreated?.();
       onClose();
     } catch {
       setError("Network error. Please try again.");

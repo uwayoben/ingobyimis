@@ -2,44 +2,6 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUser } from "@/lib/auth";
 import { ok, unauthorized, serverError } from "@/lib/api-response";
 
-function getDateRange(filter: string): { gte: Date; lte: Date } | null {
-  const now = new Date();
-  const y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
-
-  switch (filter) {
-    case "today":
-      return { gte: new Date(y, m, d), lte: new Date(y, m, d, 23, 59, 59, 999) };
-    case "this_week": {
-      const dow = now.getDay();
-      const diff = dow === 0 ? 6 : dow - 1; // Monday-based week
-      return {
-        gte: new Date(y, m, d - diff),
-        lte: new Date(y, m, d - diff + 6, 23, 59, 59, 999),
-      };
-    }
-    case "this_month":
-      return { gte: new Date(y, m, 1), lte: new Date(y, m + 1, 0, 23, 59, 59, 999) };
-    case "last_month":
-      return { gte: new Date(y, m - 1, 1), lte: new Date(y, m, 0, 23, 59, 59, 999) };
-    case "this_quarter": {
-      const qs = Math.floor(m / 3) * 3;
-      return { gte: new Date(y, qs, 1), lte: new Date(y, qs + 3, 0, 23, 59, 59, 999) };
-    }
-    case "last_quarter": {
-      const cq = Math.floor(m / 3);
-      const lq = cq === 0 ? 3 : cq - 1;
-      const ly = cq === 0 ? y - 1 : y;
-      return { gte: new Date(ly, lq * 3, 1), lte: new Date(ly, lq * 3 + 3, 0, 23, 59, 59, 999) };
-    }
-    case "this_year":
-      return { gte: new Date(y, 0, 1), lte: new Date(y, 11, 31, 23, 59, 59, 999) };
-    case "last_year":
-      return { gte: new Date(y - 1, 0, 1), lte: new Date(y - 1, 11, 31, 23, 59, 59, 999) };
-    default:
-      return null;
-  }
-}
-
 function getCustomRange(from: string | null, to: string | null): { gte: Date; lte: Date } | null {
   if (!from || !to) return null;
   const gte = new Date(`${from}T00:00:00`);
@@ -67,12 +29,13 @@ export async function GET(request: Request) {
 
     const cid = auth.companyId;
     const url = new URL(request.url);
-    const filter = url.searchParams.get("filter") ?? "all";
-    const range = filter === "custom"
-      ? getCustomRange(url.searchParams.get("from"), url.searchParams.get("to"))
-      : getDateRange(filter);
+    const range = getCustomRange(url.searchParams.get("from"), url.searchParams.get("to"));
 
-    const loanWhere = { companyId: cid, ...(range ? { createdAt: range } : {}) };
+    // Loan KPIs are keyed off disbursementDate (the actual lending action),
+    // not createdAt (when the record was first entered). Loans that were
+    // never disbursed (pending/rejected) have no disbursementDate, so a
+    // date range naturally excludes them — they haven't been "acted on" yet.
+    const loanWhere = { companyId: cid, ...(range ? { disbursementDate: range } : {}) };
     const payWhere = { companyId: cid, ...(range ? { date: range } : {}) };
     const expWhere = { companyId: cid, ...(range ? { date: range } : {}) };
 
@@ -124,7 +87,7 @@ export async function GET(request: Request) {
       // must compute: fixed → value; percentage → loan.amount × rate / 100.
       // Recurring fees are multiplied by installmentsPaid.
       prisma.loanFee.findMany({
-        where: { loan: { companyId: cid, ...(range ? { createdAt: range } : {}) } },
+        where: { loan: { companyId: cid, ...(range ? { disbursementDate: range } : {}) } },
         select: {
           type: true,
           value: true,

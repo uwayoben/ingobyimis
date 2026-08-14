@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getAuthUser } from "@/lib/auth";
 import { ok, unauthorized, forbidden, notFound, badRequest, serverError } from "@/lib/api-response";
+import { applyAdditionalInterestCharge } from "@/lib/loan-charges";
 import { z } from "zod";
 
 const addSchema = z.object({
@@ -30,21 +31,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (!["active", "overdue", "disbursed"].includes(loan.status))
       return badRequest("Additional interest can only be added to active or overdue loans.");
 
-    const updated = await prisma.$transaction(async (tx) => {
-      // Leave an audit trail as a loan comment
-      await tx.loanComment.create({
-        data: {
-          loanId:      id,
-          companyId:   auth.companyId!,
-          createdById: auth.userId,
-          content:     `[Additional Interest] RWF ${amount.toLocaleString()} added. Reason: ${reason}`,
-        },
-      });
-
-      return tx.loan.update({
-        where: { id },
-        data: { additionalInterest: { increment: amount } },
-      });
+    const updated = await applyAdditionalInterestCharge({
+      loanId:           id,
+      companyId:        auth.companyId!,
+      amount,
+      reason,
+      recordedByUserId: auth.userId,
     });
 
     return ok({

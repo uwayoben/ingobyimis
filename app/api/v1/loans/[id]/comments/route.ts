@@ -28,8 +28,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       loanId:        c.loanId,
       content:       c.content,
       createdById:   c.createdById,
-      createdByName: c.createdBy.name,
-      createdByRole: c.createdBy.role,
+      createdByName: c.createdBy?.name ?? "System",
+      createdByRole: c.createdBy?.role ?? null,
       createdAt:     c.createdAt,
     })));
   } catch (e) {
@@ -67,8 +67,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       loanId:        comment.loanId,
       content:       comment.content,
       createdById:   comment.createdById,
-      createdByName: comment.createdBy.name,
-      createdByRole: comment.createdBy.role,
+      createdByName: comment.createdBy?.name ?? "System",
+      createdByRole: comment.createdBy?.role ?? null,
       createdAt:     comment.createdAt,
     });
   } catch (e) {

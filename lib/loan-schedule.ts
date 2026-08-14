@@ -157,6 +157,16 @@ export const FREQUENCY_DAYS: Record<string, number> = {
   monthly: 30,
 };
 
+/**
+ * Additional interest charged for one 30-day overdue cycle, using the
+ * loan's own stored annual rate (the same rate used for its regular
+ * schedule) applied monthly to the current outstanding principal.
+ */
+export function calculateMonthlyAdditionalInterest(annualInterestRate: number, balanceOutstanding: number): number {
+  const monthlyRate = annualInterestRate / 100 / 12;
+  return Math.max(0, Math.round(balanceOutstanding * monthlyRate));
+}
+
 /** BNR loan classification based on days overdue */
 export function classifyLoan(daysOverdue: number): {
   loanClass: "Normal" | "Watch" | "Substandard" | "Doubtful" | "Loss";

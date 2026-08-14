@@ -4,7 +4,7 @@ import {
   DollarSign, FileText, Users, TrendingUp, TrendingDown, AlertTriangle,
   Activity, ArrowDownToLine, ArrowUpToLine, Percent, ClipboardList, UserPlus,
   Loader2, CalendarDays, Banknote, Receipt, PiggyBank, BadgePercent,
-  CircleDollarSign, Tag, ChevronDown, Landmark,
+  CircleDollarSign, Tag, Landmark,
 } from "lucide-react";
 import { KPICard } from "@/components/dashboard/KPICard";
 import { LoanChart } from "@/components/dashboard/LoanChart";
@@ -78,25 +78,14 @@ interface OverdueLoan {
   nextPaymentAmount: number;
 }
 
-const FILTERS = [
-  { value: "all", label: "All Time" },
-  { value: "today", label: "Today" },
-  { value: "this_week", label: "This Week" },
-  { value: "this_month", label: "This Month" },
-  { value: "last_month", label: "Last Month" },
-  { value: "this_quarter", label: "This Quarter" },
-  { value: "last_quarter", label: "Last Quarter" },
-  { value: "this_year", label: "This Year" },
-  { value: "last_year", label: "Last Year" },
-  { value: "custom", label: "Custom Range" },
-] as const;
+function startOfMonthISO(): string {
+  const d = new Date();
+  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split("T")[0];
+}
 
-const PERIOD_LABEL: Record<string, string> = {
-  all: "all time", today: "today", this_week: "this week",
-  this_month: "this month", last_month: "last month",
-  this_quarter: "this quarter", last_quarter: "last quarter",
-  this_year: "this year", last_year: "last year",
-};
+function todayISO(): string {
+  return new Date().toISOString().split("T")[0];
+}
 
 const GREETINGS: Record<string, string> = {
   super_admin: "System is running smoothly.",
@@ -112,9 +101,8 @@ export default function DashboardPage() {
   const [pendingLoans, setPendingLoans] = useState<PendingLoan[]>([]);
   const [overdueList, setOverdueList] = useState<OverdueLoan[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState("all");
-  const [customFrom, setCustomFrom] = useState("");
-  const [customTo,   setCustomTo]   = useState("");
+  const [customFrom, setCustomFrom] = useState(startOfMonthISO);
+  const [customTo,   setCustomTo]   = useState(todayISO);
 
   const [storedUser, setStoredUser] = useState<ReturnType<typeof getStoredUser>>(null);
   useEffect(() => { setStoredUser(getStoredUser()); }, []);
@@ -122,17 +110,14 @@ export default function DashboardPage() {
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   const companyName = storedUser?.companyName ?? "";
-  const period = filter === "custom"
-    ? (customFrom && customTo ? `${formatDate(customFrom)} – ${formatDate(customTo)}` : "custom range")
-    : (PERIOD_LABEL[filter] ?? "all time");
+  const period = customFrom && customTo ? `${formatDate(customFrom)} – ${formatDate(customTo)}` : "selected range";
 
-  const fetchData = useCallback((activeFilter: string, from?: string, to?: string) => {
+  const fetchData = useCallback((from: string, to: string) => {
     const storedRole = getStoredUser()?.role;
     if (storedRole === "super_admin") { setLoading(false); return; }
     setLoading(true);
-    const rangeQuery = activeFilter === "custom" && from && to ? `&from=${from}&to=${to}` : "";
     Promise.all([
-      apiFetch(`/api/v1/dashboard?filter=${activeFilter}${rangeQuery}`).then((r) => r.json()),
+      apiFetch(`/api/v1/dashboard?from=${from}&to=${to}`).then((r) => r.json()),
       apiFetch("/api/v1/loans?status=pending&limit=5").then((r) => r.json()),
       apiFetch("/api/v1/loans?status=overdue&limit=50").then((r) => r.json()),
     ]).then(([dashData, loansData, overdueData]) => {
@@ -143,12 +128,8 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    if (filter === "custom") {
-      if (customFrom && customTo) fetchData(filter, customFrom, customTo);
-    } else {
-      fetchData(filter);
-    }
-  }, [filter, customFrom, customTo, fetchData]);
+    if (customFrom && customTo) fetchData(customFrom, customTo);
+  }, [customFrom, customTo, fetchData]);
 
   if (loading) {
     return (
@@ -225,27 +206,10 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Date filter — managing_director only */}
+            {/* Date range filter — managing_director only */}
             {role === "managing_director" && (
-              <div className="relative">
-                <CalendarDays className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-green-300 pointer-events-none" />
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-green-300 pointer-events-none" />
-                <select
-                  value={filter}
-                  onChange={(e) => setFilter(e.target.value)}
-                  className="appearance-none bg-white/15 backdrop-blur-sm border border-white/20 text-white text-sm font-medium rounded-xl pl-9 pr-8 py-2 cursor-pointer hover:bg-white/20 transition-colors focus:outline-none focus:ring-2 focus:ring-white/30"
-                >
-                  {FILTERS.map((f) => (
-                    <option key={f.value} value={f.value} className="bg-green-900 text-white">
-                      {f.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {role === "managing_director" && filter === "custom" && (
               <div className="flex items-center gap-1.5">
+                <CalendarDays className="w-4 h-4 text-green-300 shrink-0" />
                 <input
                   type="date"
                   value={customFrom}
@@ -286,10 +250,10 @@ export default function DashboardPage() {
               <span className="text-green-300/70 text-xs">{companyName}</span>
             </>
           )}
-          {role === "managing_director" && filter !== "all" && (
+          {role === "managing_director" && (
             <>
               <span className="text-green-300/50 text-xs">·</span>
-              <span className="text-green-300/70 text-xs capitalize">Showing {period}</span>
+              <span className="text-green-300/70 text-xs">Showing {period}</span>
             </>
           )}
         </div>

@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import {
   ArrowLeft, CheckCircle2, XCircle, Printer, ArrowDownToLine, Loader2,
   AlertTriangle, Banknote, TrendingDown, CreditCard, ArrowDownUp, FileText, ExternalLink,
-  MinusCircle, TrendingUp, Upload, X, Receipt, Trash2, MessageSquare, Send, PlusCircle, MoreVertical,
+  MinusCircle, TrendingUp, Upload, X, Receipt, Trash2, MessageSquare, Send, PlusCircle, MoreVertical, Download,
 } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import type { Loan, Installment, Payment, LoanComment } from "@/types";
 import { apiFetch } from "@/lib/api-fetch";
 import { useRole } from "@/components/RoleContext";
+import { computeLoanOverdue } from "@/lib/loan-overdue";
 
 function formatCurrency(n: number) {
   return "RWF " + Math.round(n).toLocaleString();
@@ -2474,6 +2475,7 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
   const [showDeleteModal,   setShowDeleteModal]   = useState(false);
   const [deleting,          setDeleting]          = useState(false);
   const [deleteError,       setDeleteError]       = useState("");
+  const [downloadingAgreement, setDownloadingAgreement] = useState(false);
   const [showEditLoanModal,    setShowEditLoanModal]    = useState(false);
   const [editingPayment,       setEditingPayment]       = useState<(Payment & { recordedByName?: string }) | null>(null);
   const [showRestructureModal, setShowRestructureModal] = useState(false);
@@ -2541,6 +2543,31 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
       setDeleteError("Network error.");
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const handleDownloadAgreement = async () => {
+    setDownloadingAgreement(true);
+    try {
+      const res = await apiFetch(`/api/v1/loans/${id}/agreement`);
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        alert(json.error || "Failed to generate the agreement.");
+        return;
+      }
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = `Amasezerano-${(loan?.customer?.names ?? loan?.customerName ?? "loan").replace(/\s+/g, "-")}-${id}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert("Network error while downloading the agreement.");
+    } finally {
+      setDownloadingAgreement(false);
     }
   };
 
@@ -2646,11 +2673,39 @@ export default function LoanDetailPage({ params }: { params: Promise<{ id: strin
             ...(canAddProcFee  ? [{ label: "Add Processing Fee", icon: <PlusCircle className="w-3.5 h-3.5 text-sky-500" />,    color: "text-sky-700 dark:text-sky-300",       onClick: () => setShowAddProcFeeModal(true) }] : []),
             ...(["active","overdue","approved","disbursed"].includes(loan.status) && canDisburse ? [{ label: "Restructure", icon: <ArrowDownUp className="w-3.5 h-3.5 text-blue-500" />, color: "text-blue-700 dark:text-blue-300", onClick: () => setShowRestructureModal(true) }] : []),
             { label: "View Agreement", icon: <FileText className="w-3.5 h-3.5 text-gray-500" />, onClick: () => setShowContractModal(true) },
+            { label: downloadingAgreement ? "Preparing…" : "Download Agreement", icon: <Download className="w-3.5 h-3.5 text-gray-500" />, onClick: handleDownloadAgreement },
             ...(canEditLoan ? [{ label: "Edit Loan", icon: <Receipt className="w-3.5 h-3.5 text-gray-500" />, onClick: () => setShowEditLoanModal(true) }] : []),
             ...(canDelete   ? [{ label: "Delete Loan", icon: <Trash2 className="w-3.5 h-3.5" />, danger: true, onClick: () => { setDeleteError(""); setShowDeleteModal(true); } }] : []),
           ]} />
         </div>
       </div>
+
+      {/* ── Overdue Alert (computed live from installment due dates — never persisted) ── */}
+      {(() => {
+        const overdueInfo = computeLoanOverdue(loan.status, installments);
+        if (!overdueInfo.isOverdue) return null;
+
+        const scopeLabel = overdueInfo.overdueInstallments.length >= loan.totalInstallments
+          ? "Entire loan overdue"
+          : `${overdueInfo.overdueInstallments.length} of ${loan.totalInstallments} installment${overdueInfo.overdueInstallments.length !== 1 ? "s" : ""} overdue`;
+
+        return (
+          <div className="rounded-xl border border-red-700 bg-red-600 dark:bg-red-700 text-white px-4 py-2.5 shadow-sm">
+            <div className="flex items-center gap-3 flex-wrap">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span className="text-xs font-extrabold uppercase tracking-wide shrink-0">Overdue</span>
+              <span className="text-xs text-red-100 truncate">
+                {scopeLabel}
+                {overdueInfo.arrearsStartDate ? ` · since ${formatDate(overdueInfo.arrearsStartDate.toISOString())}` : ""}
+              </span>
+              <span className="ml-auto flex items-center gap-4 text-xs">
+                <span><span className="font-bold">{overdueInfo.daysOverdue}</span> day{overdueInfo.daysOverdue !== 1 ? "s" : ""} overdue</span>
+                <span><span className="font-bold">{formatCurrency(overdueInfo.totalArrears)}</span> in arrears</span>
+              </span>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── KPI Row ───────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
