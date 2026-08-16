@@ -190,18 +190,22 @@ export async function POST(request: Request) {
     const prefix = (company?.name ?? "XX").replace(/[^a-zA-Z]/g, "").slice(0, 2).toUpperCase();
 
     const loan = await prisma.$transaction(async (tx) => {
-      // Find the highest existing sequence for this prefix to avoid ID collisions
-      // when loans have been deleted (COUNT-based approach recycles IDs).
+      // `id` is a single global primary key, so two companies whose names share
+      // the same 2-letter prefix (e.g. "Growth Finance" and "Grow Lenders" -> "GR")
+      // must not be checked against each other's IDs independently -- look up the
+      // prefix across ALL companies and pick the first sequence number not in use.
       const existing = await tx.loan.findMany({
-        where: { companyId: auth.companyId!, id: { startsWith: `${prefix}-` } },
+        where: { id: { startsWith: `${prefix}-` } },
         select: { id: true },
       });
-      const maxSeq = existing.reduce((max, l) => {
-        const n = parseInt(l.id.replace(`${prefix}-`, ""), 10);
-        return isNaN(n) ? max : Math.max(max, n);
-      }, 0);
-      const seq    = String(maxSeq + 1).padStart(3, "0");
-      const loanId = `${prefix}-${seq}`;
+      const usedSeqs = new Set(
+        existing
+          .map((l) => parseInt(l.id.replace(`${prefix}-`, ""), 10))
+          .filter((n) => !isNaN(n))
+      );
+      let seqNum = 1;
+      while (usedSeqs.has(seqNum)) seqNum++;
+      const loanId = `${prefix}-${String(seqNum).padStart(3, "0")}`;
 
       const newLoan = await tx.loan.create({
         data: {

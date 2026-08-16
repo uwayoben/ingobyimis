@@ -192,15 +192,21 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       select: { name: true, accountBalance: true },
     });
     const prefix  = (company?.name ?? "XX").replace(/[^a-zA-Z]/g, "").slice(0, 2).toUpperCase();
+    // `id` is a global primary key, so the prefix must be checked across ALL
+    // companies (not just this one) to avoid colliding with another company
+    // that shares the same 2-letter prefix.
     const existing = await prisma.loan.findMany({
-      where: { companyId: auth.companyId!, id: { startsWith: `${prefix}-` } },
+      where: { id: { startsWith: `${prefix}-` } },
       select: { id: true },
     });
-    const maxSeq = existing.reduce((max, l) => {
-      const n = parseInt(l.id.replace(`${prefix}-`, ""), 10);
-      return isNaN(n) ? max : Math.max(max, n);
-    }, 0);
-    const newLoanId = `${prefix}-${String(maxSeq + 1).padStart(3, "0")}`;
+    const usedSeqs = new Set(
+      existing
+        .map((l) => parseInt(l.id.replace(`${prefix}-`, ""), 10))
+        .filter((n) => !isNaN(n))
+    );
+    let seqNum = 1;
+    while (usedSeqs.has(seqNum)) seqNum++;
+    const newLoanId = `${prefix}-${String(seqNum).padStart(3, "0")}`;
 
     const newLoan = await prisma.$transaction(async (tx) => {
       // 1. Close the old loan — zero out balance, mark completed
